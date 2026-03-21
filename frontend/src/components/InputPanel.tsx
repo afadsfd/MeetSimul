@@ -40,12 +40,17 @@ export default function InputPanel({
 
     const setup = async () => {
       try {
-        unlistenResult = await listen<{ text: string; final: boolean }>('speech_recognized', (event) => {
+        unlistenResult = await listen<{ text: string; final: string }>('speech_recognized', (event) => {
           const { text } = event.payload;
+          const isFinal = event.payload.final === 'true';
           if (text) {
-            setInputText(text);
-            if (realTimeTranslate) {
-              onDebouncedTranslate(text);
+            if (isFinal) {
+              // Final result: translate+speak, then clear input for next sentence
+              onTranslateAndSpeak(text);
+              setInputText('');
+            } else {
+              // Interim result: show in input box
+              setInputText(text);
             }
           }
         });
@@ -73,7 +78,7 @@ export default function InputPanel({
       unlistenStatus?.();
       unlistenError?.();
     };
-  }, [realTimeTranslate, onDebouncedTranslate]);
+  }, [realTimeTranslate, onDebouncedTranslate, onTranslateAndSpeak]);
 
   const toggleListening = useCallback(async () => {
     if (isListening) {

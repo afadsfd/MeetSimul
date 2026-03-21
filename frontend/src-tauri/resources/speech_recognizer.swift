@@ -25,11 +25,8 @@ class SpeechRecognizer {
 
         let req = SFSpeechAudioBufferRecognitionRequest()
         req.shouldReportPartialResults = true
-        if #available(macOS 13, *) {
-            if speechRecognizer.supportsOnDeviceRecognition {
-                req.requiresOnDeviceRecognition = true
-            }
-        }
+        // Don't force on-device recognition - it requires Siri to be fully enabled
+        // Let the system decide whether to use on-device or server-based recognition
         request = req
 
         let inputNode = audioEngine.inputNode
