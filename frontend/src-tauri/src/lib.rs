@@ -1,18 +1,67 @@
 use futures_util::StreamExt;
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::num::NonZeroUsize;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Condvar, Mutex};
 use tauri::Emitter;
 use tauri::Manager;
+
+// ─── TTS Queue ──────────────────────────────────────────────
+
+#[derive(Clone)]
+struct TtsItem {
+    text: String,
+    voice: String,
+}
+
+struct TtsQueue {
+    queue: Mutex<VecDeque<TtsItem>>,
+    condvar: Condvar,
+    is_speaking: AtomicBool,
+}
+
+impl TtsQueue {
+    fn new() -> Self {
+        Self {
+            queue: Mutex::new(VecDeque::new()),
+            condvar: Condvar::new(),
+            is_speaking: AtomicBool::new(false),
+        }
+    }
+
+    fn enqueue(&self, item: TtsItem) {
+        let mut q = self.queue.lock().unwrap();
+        q.push_back(item);
+        self.condvar.notify_one();
+    }
+
+    fn clear_and_stop(&self) {
+        {
+            let mut q = self.queue.lock().unwrap();
+            q.clear();
+        }
+        stop_speaking_internal();
+    }
+
+    fn dequeue(&self) -> TtsItem {
+        let mut q = self.queue.lock().unwrap();
+        loop {
+            if let Some(item) = q.pop_front() {
+                return item;
+            }
+            q = self.condvar.wait(q).unwrap();
+        }
+    }
+}
 
 // ─── App State ───────────────────────────────────────────────
 
 struct AppState {
     translate_cache: Mutex<LruCache<String, String>>,
-    is_speaking: AtomicBool,
+    tts_queue: Arc<TtsQueue>,
     listener_process: Mutex<Option<u32>>, // PID of speech recognizer
 }
 
@@ -288,8 +337,7 @@ async fn cloud_translate_youdao(text: &str) -> Result<String, String> {
 // ─── TTS (Cloud - Edge TTS via command) ─────────────────────
 
 #[tauri::command]
-async fn speak_text(
-    app: tauri::AppHandle,
+fn speak_text(
     text: String,
     voice: String,
     _mode: String,
@@ -298,19 +346,18 @@ async fn speak_text(
     if text.trim().is_empty() {
         return Ok(());
     }
+    // Add to queue - background worker will play it in order
+    state.tts_queue.enqueue(TtsItem { text, voice });
+    Ok(())
+}
 
-    stop_speaking_internal();
-
-    state.is_speaking.store(true, Ordering::SeqCst);
-    app.emit("speak_status", serde_json::json!({"status": "playing", "text": &text}))
-        .ok();
-
-    let edge_voice = match voice.as_str() {
+fn play_tts_item(item: &TtsItem) {
+    let edge_voice = match item.voice.as_str() {
         "Jenny" | "Samantha" | "Female" => "en-US-JennyNeural",
         _ => "en-US-GuyNeural",
     };
 
-    let safe_text = text
+    let safe_text = item.text
         .replace('"', "")
         .replace('\'', "")
         .replace(';', "")
@@ -328,7 +375,7 @@ async fn speak_text(
             let _ = Command::new("afplay").arg(tmp_file).output();
         }
         _ => {
-            let say_voice = if voice == "Jenny" || voice == "Samantha" || voice == "Female" {
+            let say_voice = if item.voice == "Jenny" || item.voice == "Samantha" || item.voice == "Female" {
                 "Samantha"
             } else {
                 "Daniel"
@@ -338,12 +385,6 @@ async fn speak_text(
                 .output();
         }
     }
-
-    state.is_speaking.store(false, Ordering::SeqCst);
-    app.emit("speak_status", serde_json::json!({"status": "idle"}))
-        .ok();
-
-    Ok(())
 }
 
 fn stop_speaking_internal() {
@@ -353,8 +394,7 @@ fn stop_speaking_internal() {
 
 #[tauri::command]
 fn stop_speaking(state: tauri::State<'_, AppState>) {
-    stop_speaking_internal();
-    state.is_speaking.store(false, Ordering::SeqCst);
+    state.tts_queue.clear_and_stop();
 }
 
 // ─── Speech Recognition (macOS SFSpeechRecognizer) ──────────
@@ -664,12 +704,16 @@ async fn download_models(app: tauri::AppHandle) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let tts_queue = Arc::new(TtsQueue::new());
+
+    // Spawn TTS worker thread - processes queue items sequentially
+    let tts_queue_clone = tts_queue.clone();
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             translate_cache: Mutex::new(LruCache::new(NonZeroUsize::new(500).unwrap())),
-            is_speaking: AtomicBool::new(false),
+            tts_queue: tts_queue.clone(),
             listener_process: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
@@ -687,7 +731,7 @@ pub fn run() {
             check_models_status,
             download_models,
         ])
-        .setup(|app| {
+        .setup(move |app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
@@ -695,6 +739,32 @@ pub fn run() {
                         .build(),
                 )?;
             }
+
+            // Start TTS worker thread
+            let app_handle = app.handle().clone();
+            let queue = tts_queue_clone.clone();
+            std::thread::spawn(move || {
+                loop {
+                    let item = queue.dequeue();
+                    queue.is_speaking.store(true, Ordering::SeqCst);
+                    app_handle.emit("speak_status", serde_json::json!({
+                        "status": "playing",
+                        "text": &item.text,
+                    })).ok();
+
+                    play_tts_item(&item);
+
+                    // Check if queue is empty to set idle
+                    let is_empty = queue.queue.lock().unwrap().is_empty();
+                    if is_empty {
+                        queue.is_speaking.store(false, Ordering::SeqCst);
+                        app_handle.emit("speak_status", serde_json::json!({
+                            "status": "idle",
+                        })).ok();
+                    }
+                }
+            });
+
             Ok(())
         })
         .run(tauri::generate_context!())
