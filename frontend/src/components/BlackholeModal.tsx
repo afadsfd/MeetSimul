@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Loader2 } from 'lucide-react';
 
-const invoke = (window as any).__TAURI__?.core?.invoke;
+import { invoke } from '@tauri-apps/api/core';
 
 interface BlackholeModalProps {
   onClose: () => void;

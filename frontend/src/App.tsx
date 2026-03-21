@@ -11,7 +11,7 @@ import { useSettings } from './hooks/useSettings';
 import { useTranslation } from './hooks/useTranslation';
 import type { AppView } from './types';
 
-const invoke = (window as any).__TAURI__?.core?.invoke;
+import { invoke } from '@tauri-apps/api/core';
 
 export default function App() {
   const { settings, updateSettings, loaded } = useSettings();
@@ -33,7 +33,7 @@ export default function App() {
   // Check BlackHole on mount
   useEffect(() => {
     if (invoke) {
-      invoke('check_blackhole_installed').then((ok: boolean) => {
+      invoke<boolean>('check_blackhole_installed').then((ok) => {
         if (!ok) setShowBlackholeWarning(true);
       }).catch(() => {});
     }

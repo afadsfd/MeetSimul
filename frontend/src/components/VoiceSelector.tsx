@@ -2,7 +2,7 @@ import React from 'react';
 import { ArrowLeft, Play, Check } from 'lucide-react';
 import type { Settings, AppView } from '../types';
 
-const invoke = (window as any).__TAURI__?.core?.invoke;
+import { invoke } from '@tauri-apps/api/core';
 
 const CLOUD_VOICES = [
   { id: 'Guy', label: 'Guy', desc: '成熟男声（en-US-GuyNeural）', gender: '男' },

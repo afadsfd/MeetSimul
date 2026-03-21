@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Plus, Trash2 } from 'lucide-react';
 import type { GlossaryEntry, AppView } from '../types';
 
-const invoke = (window as any).__TAURI__?.core?.invoke;
+import { invoke } from '@tauri-apps/api/core';
 
 interface GlossaryEditorProps {
   onNavigate: (view: AppView) => void;
@@ -15,7 +15,7 @@ export default function GlossaryEditor({ onNavigate }: GlossaryEditorProps) {
 
   useEffect(() => {
     if (invoke) {
-      invoke('get_glossary').then(setEntries).catch(() => {});
+      invoke<GlossaryEntry[]>('get_glossary').then(setEntries).catch(() => {});
     }
   }, []);
 

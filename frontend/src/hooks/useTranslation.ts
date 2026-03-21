@@ -1,8 +1,8 @@
 import { useState, useRef, useCallback } from 'react';
 import { isSystemPrompt } from '../utils/systemPromptFilter';
-import type { Settings } from '../types';
+import type { Settings, TranslateResult } from '../types';
 
-const invoke = (window as any).__TAURI__?.core?.invoke;
+import { invoke } from '@tauri-apps/api/core';
 
 export function useTranslation(settings: Settings) {
   const [translation, setTranslation] = useState('');
@@ -16,7 +16,7 @@ export function useTranslation(settings: Settings) {
 
     setIsTranslating(true);
     try {
-      const result = await invoke('translate_text', {
+      const result = await invoke<TranslateResult>('translate_text', {
         text: text.trim(),
         mode: settings.mode,
       });
@@ -46,7 +46,7 @@ export function useTranslation(settings: Settings) {
     if (!text.trim() || isSystemPrompt(text) || !invoke) return;
     setIsTranslating(true);
     try {
-      const result = await invoke('translate_text', {
+      const result = await invoke<TranslateResult>('translate_text', {
         text: text.trim(),
         mode: settings.mode,
       });

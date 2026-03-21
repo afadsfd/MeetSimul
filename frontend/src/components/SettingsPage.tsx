@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ArrowLeft, Cloud, Cpu, Download, Check, BookOpen, AudioLines, Loader } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
+import { listen as tauriListen } from '@tauri-apps/api/event';
 import type { Settings, ModelStatus, AppView } from '../types';
-
-const invoke = (window as any).__TAURI__?.core?.invoke;
-const listen = (window as any).__TAURI__?.event?.listen;
 
 interface DownloadProgress {
   model_id: string;
@@ -27,20 +26,18 @@ export default function SettingsPage({ settings, onUpdateSettings, onNavigate }:
   const unlistenRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    if (invoke) {
-      invoke('check_models_status').then(setModelStatus).catch(() => {});
-    }
+    invoke<ModelStatus>('check_models_status').then(setModelStatus).catch(() => {});
     return () => { unlistenRef.current?.(); };
   }, []);
 
   const handleDownload = async () => {
-    if (!invoke || !listen || downloading) return;
+    if (downloading) return;
     setDownloading(true);
     setDownloadError(null);
     setProgress({});
 
     // Listen for progress events
-    unlistenRef.current = await listen('download_progress', (event: { payload: DownloadProgress }) => {
+    unlistenRef.current = await tauriListen('download_progress', (event: { payload: DownloadProgress }) => {
       const p = event.payload;
       setProgress(prev => ({ ...prev, [p.model_id]: p }));
       if (p.error) {
@@ -51,10 +48,10 @@ export default function SettingsPage({ settings, onUpdateSettings, onNavigate }:
     try {
       await invoke('download_models');
       // Refresh status after download
-      const status = await invoke('check_models_status');
+      const status = await invoke<ModelStatus>('check_models_status');
       setModelStatus(status);
     } catch (e: any) {
-      setDownloadError(typeof e === 'string' ? e : e?.message || '下载失败');
+      setDownloadError(typeof e === 'string' ? e : e?.message || '下载失败，请检查网络连接');
     } finally {
       setDownloading(false);
       unlistenRef.current?.();

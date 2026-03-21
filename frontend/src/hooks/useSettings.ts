@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { Settings } from '../types';
 
-const invoke = (window as any).__TAURI__?.core?.invoke;
+import { invoke } from '@tauri-apps/api/core';
 
 const defaultSettings: Settings = {
   mode: 'cloud',
@@ -15,7 +15,7 @@ export function useSettings() {
 
   useEffect(() => {
     if (invoke) {
-      invoke('get_settings').then((s: Settings) => {
+      invoke<Settings>('get_settings').then((s) => {
         setSettings(s);
         setLoaded(true);
       }).catch(() => setLoaded(true));

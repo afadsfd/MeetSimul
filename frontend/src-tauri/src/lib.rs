@@ -386,17 +386,20 @@ const MODELS: &[ModelInfo] = &[
     ModelInfo {
         id: "asr",
         filename: "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17.tar.bz2",
-        url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17.tar.bz2",
+        // Use ModelScope mirror (accessible in China)
+        url: "https://www.modelscope.cn/models/pkufool/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/master/model.int8.onnx",
     },
     ModelInfo {
         id: "translation",
         filename: "qwen2.5-0.5b-instruct-q4_k_m.gguf",
-        url: "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+        // Use HF mirror (accessible in China)
+        url: "https://hf-mirror.com/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf",
     },
     ModelInfo {
         id: "tts",
         filename: "en_US-lessac-medium.onnx",
-        url: "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx",
+        // Use HF mirror (accessible in China)
+        url: "https://hf-mirror.com/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx",
     },
 ];
 
