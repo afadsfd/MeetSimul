@@ -37,7 +37,8 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "resources/BlackHole2ch.pkg"
+      "resources/BlackHole2ch.pkg",
+      "resources/speech_recognizer.swift"
     ],
     "macOS": {
       "minimumSystemVersion": "13.0"

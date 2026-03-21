@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>MeetSimul 需要访问麦克风来进行语音识别</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>MeetSimul 需要语音识别来将您的语音转换为文字</string>
+</dict>
+</plist>

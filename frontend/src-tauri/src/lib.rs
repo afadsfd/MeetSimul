@@ -13,6 +13,7 @@ use tauri::Manager;
 struct AppState {
     translate_cache: Mutex<LruCache<String, String>>,
     is_speaking: AtomicBool,
+    listener_process: Mutex<Option<u32>>, // PID of speech recognizer
 }
 
 // ─── Types ───────────────────────────────────────────────────
@@ -166,7 +167,7 @@ fn save_glossary(entries: Vec<GlossaryEntry>) -> Result<(), String> {
 #[tauri::command]
 async fn translate_text(
     text: String,
-    mode: String,
+    _mode: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<TranslateResult, String> {
     if text.trim().is_empty() {
@@ -188,12 +189,8 @@ async fn translate_text(
         }
     }
 
-    if mode == "local" {
-        // TODO: Phase 3 - local translation with Qwen3
-        return Err("Local models not yet available. Please use cloud mode.".to_string());
-    }
-
-    // Cloud translation: Google Translate free API
+    // Both local and cloud modes use cloud translation for now
+    // Local models are downloaded but inference runtime will be added in Phase 3
     let translated = cloud_translate(&text).await?;
 
     // Store in cache
@@ -229,7 +226,6 @@ async fn cloud_translate(text: &str) -> Result<String, String> {
         .map_err(|e| format!("Google Translate request failed: {}", e))?;
 
     if !resp.status().is_success() {
-        // Fallback to Youdao
         return cloud_translate_youdao(text).await;
     }
 
@@ -238,7 +234,6 @@ async fn cloud_translate(text: &str) -> Result<String, String> {
         .await
         .map_err(|e| format!("Failed to parse response: {}", e))?;
 
-    // Google returns [[["translated","original",...],...],...] structure
     if let Some(arr) = body.get(0).and_then(|v| v.as_array()) {
         let mut result = String::new();
         for item in arr {
@@ -251,7 +246,6 @@ async fn cloud_translate(text: &str) -> Result<String, String> {
         }
     }
 
-    // Fallback
     cloud_translate_youdao(text).await
 }
 
@@ -305,7 +299,6 @@ async fn speak_text(
         return Ok(());
     }
 
-    // Stop any existing speech
     stop_speaking_internal();
 
     state.is_speaking.store(true, Ordering::SeqCst);
@@ -317,7 +310,6 @@ async fn speak_text(
         _ => "en-US-GuyNeural",
     };
 
-    // Sanitize text for shell
     let safe_text = text
         .replace('"', "")
         .replace('\'', "")
@@ -327,18 +319,15 @@ async fn speak_text(
 
     let tmp_file = "/tmp/meetsimul_tts.mp3";
 
-    // Use edge-tts Python package if available, otherwise fallback to macOS say
     let edge_tts_result = Command::new("edge-tts")
         .args(["--voice", edge_voice, "--text", &safe_text, "--write-media", tmp_file])
         .output();
 
     match edge_tts_result {
         Ok(output) if output.status.success() => {
-            // Play the generated audio
             let _ = Command::new("afplay").arg(tmp_file).output();
         }
         _ => {
-            // Fallback to macOS built-in say command
             let say_voice = if voice == "Jenny" || voice == "Samantha" || voice == "Female" {
                 "Samantha"
             } else {
@@ -368,6 +357,164 @@ fn stop_speaking(state: tauri::State<'_, AppState>) {
     state.is_speaking.store(false, Ordering::SeqCst);
 }
 
+// ─── Speech Recognition (macOS SFSpeechRecognizer) ──────────
+
+fn get_speech_binary_path() -> std::path::PathBuf {
+    get_app_data_dir().join("speech_recognizer")
+}
+
+fn compile_speech_recognizer(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    let binary = get_speech_binary_path();
+    // Check if binary exists and source hasn't changed
+    // Use a version marker to detect updates
+    let version_marker = get_app_data_dir().join("speech_recognizer.version");
+    let current_version = "2.0.1"; // bump this when Swift source changes
+    let needs_compile = if binary.exists() {
+        match std::fs::read_to_string(&version_marker) {
+            Ok(v) => v.trim() != current_version,
+            Err(_) => true,
+        }
+    } else {
+        true
+    };
+    if !needs_compile {
+        return Ok(binary);
+    }
+    // Remove old binary
+    let _ = std::fs::remove_file(&binary);
+
+    // Find the Swift source bundled as a resource
+    let resource_base = app
+        .path()
+        .resource_dir()
+        .map_err(|e| format!("Cannot get resource dir: {}", e))?;
+
+    // Tauri bundles resources under Resources/resources/ subdirectory
+    let source = resource_base.join("resources").join("speech_recognizer.swift");
+    let source = if source.exists() {
+        source
+    } else {
+        // Fallback: check directly under Resources/
+        let alt = resource_base.join("speech_recognizer.swift");
+        if alt.exists() {
+            alt
+        } else {
+            return Err(format!(
+                "speech_recognizer.swift not found. Checked:\n  {:?}\n  {:?}",
+                resource_base.join("resources").join("speech_recognizer.swift"),
+                resource_base.join("speech_recognizer.swift")
+            ));
+        }
+    };
+
+    // Compile the Swift source
+    let output = Command::new("swiftc")
+        .args([
+            "-O",
+            "-o",
+            binary.to_str().unwrap(),
+            source.to_str().unwrap(),
+            "-framework", "Speech",
+            "-framework", "AVFoundation",
+        ])
+        .output()
+        .map_err(|e| format!("Failed to run swiftc: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Failed to compile speech recognizer: {}", stderr));
+    }
+
+    // Write version marker
+    let _ = std::fs::write(&version_marker, current_version);
+
+    Ok(binary)
+}
+
+#[tauri::command]
+async fn start_listening(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    // Stop existing listener
+    stop_listening_internal(&state);
+
+    let binary = compile_speech_recognizer(&app)?;
+
+    // Spawn the speech recognizer process
+    let child = std::process::Command::new(&binary)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Failed to start speech recognizer: {}", e))?;
+
+    let pid = child.id();
+    {
+        let mut lp = state.listener_process.lock().unwrap();
+        *lp = Some(pid);
+    }
+
+    // Read stdout in a background thread and emit events
+    let app_handle = app.clone();
+    let state_pid = pid;
+    std::thread::spawn(move || {
+        use std::io::BufRead;
+        if let Some(stdout) = child.stdout {
+            let reader = std::io::BufReader::new(stdout);
+            for line in reader.lines() {
+                if let Ok(line) = line {
+                    if line.trim().is_empty() {
+                        continue;
+                    }
+                    // Parse the JSON output from Swift helper
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&line) {
+                        let msg_type = json.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                        match msg_type {
+                            "result" => {
+                                let text = json.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                                let is_final = json.get("final").and_then(|v| v.as_bool()).unwrap_or(false);
+                                app_handle.emit("speech_recognized", serde_json::json!({
+                                    "text": text,
+                                    "final": is_final,
+                                })).ok();
+                            }
+                            "status" => {
+                                let status = json.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                                app_handle.emit("speech_status", serde_json::json!({
+                                    "status": status,
+                                })).ok();
+                            }
+                            "error" => {
+                                let error = json.get("error").and_then(|v| v.as_str()).unwrap_or("");
+                                app_handle.emit("speech_error", serde_json::json!({
+                                    "error": error,
+                                })).ok();
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+        // Process ended
+        let _ = state_pid; // just to move it into the closure
+    });
+
+    Ok(())
+}
+
+fn stop_listening_internal(state: &AppState) {
+    let mut lp = state.listener_process.lock().unwrap();
+    if let Some(pid) = lp.take() {
+        let _ = Command::new("kill").arg(pid.to_string()).output();
+    }
+}
+
+#[tauri::command]
+fn stop_listening(state: tauri::State<'_, AppState>) {
+    stop_listening_internal(&state);
+}
+
 // ─── Models ─────────────────────────────────────────────────
 
 fn models_dir() -> std::path::PathBuf {
@@ -386,19 +533,16 @@ const MODELS: &[ModelInfo] = &[
     ModelInfo {
         id: "asr",
         filename: "model.int8.onnx",
-        // SenseVoice ASR model via HF mirror (accessible in China)
         url: "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/model.int8.onnx",
     },
     ModelInfo {
         id: "translation",
         filename: "qwen2.5-0.5b-instruct-q4_k_m.gguf",
-        // Use HF mirror (accessible in China)
         url: "https://hf-mirror.com/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf",
     },
     ModelInfo {
         id: "tts",
         filename: "en_US-lessac-medium.onnx",
-        // Use HF mirror (accessible in China)
         url: "https://hf-mirror.com/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx",
     },
 ];
@@ -443,7 +587,6 @@ async fn download_models(app: tauri::AppHandle) -> Result<(), String> {
             continue;
         }
 
-        // Download with progress
         let resp = client
             .get(model.url)
             .header("User-Agent", "MeetSimul/2.0")
@@ -481,7 +624,6 @@ async fn download_models(app: tauri::AppHandle) -> Result<(), String> {
                 .map_err(|e| format!("Write error: {}", e))?;
             downloaded += chunk.len() as u64;
 
-            // Emit progress at most every 200ms to avoid flooding
             if last_emit.elapsed().as_millis() > 200 || downloaded == total {
                 app.emit("download_progress", DownloadProgress {
                     model_id: model.id.to_string(),
@@ -497,7 +639,6 @@ async fn download_models(app: tauri::AppHandle) -> Result<(), String> {
         file.flush().await.ok();
         drop(file);
 
-        // Rename tmp to final
         tokio::fs::rename(&tmp_path, &dest)
             .await
             .map_err(|e| format!("Failed to finalize {}: {}", model.id, e))?;
@@ -524,6 +665,7 @@ pub fn run() {
         .manage(AppState {
             translate_cache: Mutex::new(LruCache::new(NonZeroUsize::new(500).unwrap())),
             is_speaking: AtomicBool::new(false),
+            listener_process: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             check_blackhole_installed,
@@ -535,6 +677,8 @@ pub fn run() {
             translate_text,
             speak_text,
             stop_speaking,
+            start_listening,
+            stop_listening,
             check_models_status,
             download_models,
         ])
