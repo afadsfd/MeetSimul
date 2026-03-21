@@ -1,3 +1,4 @@
+use futures_util::StreamExt;
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroUsize;
@@ -367,16 +368,147 @@ fn stop_speaking(state: tauri::State<'_, AppState>) {
     state.is_speaking.store(false, Ordering::SeqCst);
 }
 
-// ─── Model Status (stub for Phase 3) ────────────────────────
+// ─── Models ─────────────────────────────────────────────────
+
+fn models_dir() -> std::path::PathBuf {
+    let dir = get_app_data_dir().join("models");
+    std::fs::create_dir_all(&dir).ok();
+    dir
+}
+
+struct ModelInfo {
+    id: &'static str,
+    filename: &'static str,
+    url: &'static str,
+}
+
+const MODELS: &[ModelInfo] = &[
+    ModelInfo {
+        id: "asr",
+        filename: "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17.tar.bz2",
+        url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17.tar.bz2",
+    },
+    ModelInfo {
+        id: "translation",
+        filename: "qwen2.5-0.5b-instruct-q4_k_m.gguf",
+        url: "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+    },
+    ModelInfo {
+        id: "tts",
+        filename: "en_US-lessac-medium.onnx",
+        url: "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx",
+    },
+];
 
 #[tauri::command]
 fn check_models_status() -> ModelStatus {
-    // TODO: Phase 3 - check actual model files
+    let dir = models_dir();
     ModelStatus {
-        asr: false,
-        translation: false,
-        tts: false,
+        asr: dir.join(MODELS[0].filename).exists(),
+        translation: dir.join(MODELS[1].filename).exists(),
+        tts: dir.join(MODELS[2].filename).exists(),
     }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DownloadProgress {
+    model_id: String,
+    downloaded: u64,
+    total: u64,
+    done: bool,
+    error: Option<String>,
+}
+
+#[tauri::command]
+async fn download_models(app: tauri::AppHandle) -> Result<(), String> {
+    let dir = models_dir();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(600))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    for model in MODELS {
+        let dest = dir.join(model.filename);
+        if dest.exists() {
+            app.emit("download_progress", DownloadProgress {
+                model_id: model.id.to_string(),
+                downloaded: 1,
+                total: 1,
+                done: true,
+                error: None,
+            }).ok();
+            continue;
+        }
+
+        // Download with progress
+        let resp = client
+            .get(model.url)
+            .header("User-Agent", "MeetSimul/2.0")
+            .send()
+            .await
+            .map_err(|e| format!("Failed to download {}: {}", model.id, e))?;
+
+        if !resp.status().is_success() {
+            let err = format!("HTTP {} for {}", resp.status(), model.id);
+            app.emit("download_progress", DownloadProgress {
+                model_id: model.id.to_string(),
+                downloaded: 0,
+                total: 0,
+                done: true,
+                error: Some(err.clone()),
+            }).ok();
+            return Err(err);
+        }
+
+        let total = resp.content_length().unwrap_or(0);
+        let tmp_path = dest.with_extension("downloading");
+        let mut file = tokio::fs::File::create(&tmp_path)
+            .await
+            .map_err(|e| format!("Failed to create file: {}", e))?;
+
+        let mut stream = resp.bytes_stream();
+        let mut downloaded: u64 = 0;
+        let mut last_emit = std::time::Instant::now();
+
+        use tokio::io::AsyncWriteExt;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| format!("Download error: {}", e))?;
+            file.write_all(&chunk)
+                .await
+                .map_err(|e| format!("Write error: {}", e))?;
+            downloaded += chunk.len() as u64;
+
+            // Emit progress at most every 200ms to avoid flooding
+            if last_emit.elapsed().as_millis() > 200 || downloaded == total {
+                app.emit("download_progress", DownloadProgress {
+                    model_id: model.id.to_string(),
+                    downloaded,
+                    total,
+                    done: false,
+                    error: None,
+                }).ok();
+                last_emit = std::time::Instant::now();
+            }
+        }
+
+        file.flush().await.ok();
+        drop(file);
+
+        // Rename tmp to final
+        tokio::fs::rename(&tmp_path, &dest)
+            .await
+            .map_err(|e| format!("Failed to finalize {}: {}", model.id, e))?;
+
+        app.emit("download_progress", DownloadProgress {
+            model_id: model.id.to_string(),
+            downloaded,
+            total,
+            done: true,
+            error: None,
+        }).ok();
+    }
+
+    Ok(())
 }
 
 // ─── App Entry ───────────────────────────────────────────────
@@ -401,6 +533,7 @@ pub fn run() {
             speak_text,
             stop_speaking,
             check_models_status,
+            download_models,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {

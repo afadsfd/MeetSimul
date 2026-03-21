@@ -1,8 +1,17 @@
-import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Cloud, Cpu, Download, Check, BookOpen, AudioLines } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { ArrowLeft, Cloud, Cpu, Download, Check, BookOpen, AudioLines, Loader } from 'lucide-react';
 import type { Settings, ModelStatus, AppView } from '../types';
 
 const invoke = (window as any).__TAURI__?.core?.invoke;
+const listen = (window as any).__TAURI__?.event?.listen;
+
+interface DownloadProgress {
+  model_id: string;
+  downloaded: number;
+  total: number;
+  done: boolean;
+  error: string | null;
+}
 
 interface SettingsPageProps {
   settings: Settings;
@@ -12,12 +21,46 @@ interface SettingsPageProps {
 
 export default function SettingsPage({ settings, onUpdateSettings, onNavigate }: SettingsPageProps) {
   const [modelStatus, setModelStatus] = useState<ModelStatus>({ asr: false, translation: false, tts: false });
+  const [downloading, setDownloading] = useState(false);
+  const [progress, setProgress] = useState<Record<string, DownloadProgress>>({});
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const unlistenRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (invoke) {
       invoke('check_models_status').then(setModelStatus).catch(() => {});
     }
+    return () => { unlistenRef.current?.(); };
   }, []);
+
+  const handleDownload = async () => {
+    if (!invoke || !listen || downloading) return;
+    setDownloading(true);
+    setDownloadError(null);
+    setProgress({});
+
+    // Listen for progress events
+    unlistenRef.current = await listen('download_progress', (event: { payload: DownloadProgress }) => {
+      const p = event.payload;
+      setProgress(prev => ({ ...prev, [p.model_id]: p }));
+      if (p.error) {
+        setDownloadError(p.error);
+      }
+    });
+
+    try {
+      await invoke('download_models');
+      // Refresh status after download
+      const status = await invoke('check_models_status');
+      setModelStatus(status);
+    } catch (e: any) {
+      setDownloadError(typeof e === 'string' ? e : e?.message || '下载失败');
+    } finally {
+      setDownloading(false);
+      unlistenRef.current?.();
+      unlistenRef.current = null;
+    }
+  };
 
   const allModelsReady = modelStatus.asr && modelStatus.translation && modelStatus.tts;
 
@@ -82,18 +125,37 @@ export default function SettingsPage({ settings, onUpdateSettings, onNavigate }:
       {settings.mode === 'local' && (
         <SettingsSection title="模型状态">
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <ModelRow label="语音识别 (SenseVoice)" ready={modelStatus.asr} size="~200MB" />
-            <ModelRow label="翻译模型 (Qwen3-0.6B)" ready={modelStatus.translation} size="~400MB" />
-            <ModelRow label="语音合成 (Piper TTS)" ready={modelStatus.tts} size="~60MB" />
+            <ModelRow label="语音识别 (SenseVoice)" ready={modelStatus.asr} size="~200MB" progress={progress['asr']} />
+            <ModelRow label="翻译模型 (Qwen2.5-0.5B)" ready={modelStatus.translation} size="~400MB" progress={progress['translation']} />
+            <ModelRow label="语音合成 (Piper TTS)" ready={modelStatus.tts} size="~60MB" progress={progress['tts']} />
           </div>
-          {!allModelsReady && (
-            <button style={{
-              marginTop: 12, width: '100%', padding: '10px 0',
-              background: '#0071e3', color: '#fff', border: 'none',
-              borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+          {downloadError && (
+            <div style={{
+              marginTop: 8, padding: '8px 12px', background: '#fff2f0',
+              borderRadius: 8, fontSize: 12, color: '#ff3b30',
             }}>
-              <Download size={14} style={{ marginRight: 6, verticalAlign: 'middle' }} />
-              下载全部模型（约 660MB）
+              {downloadError}
+            </div>
+          )}
+          {!allModelsReady && (
+            <button onClick={handleDownload} disabled={downloading} style={{
+              marginTop: 12, width: '100%', padding: '10px 0',
+              background: downloading ? '#86868b' : '#0071e3', color: '#fff', border: 'none',
+              borderRadius: 10, fontSize: 13, fontWeight: 600,
+              cursor: downloading ? 'not-allowed' : 'pointer',
+              transition: 'background 0.2s',
+            }}>
+              {downloading ? (
+                <>
+                  <Loader size={14} style={{ marginRight: 6, verticalAlign: 'middle', animation: 'spin 1s linear infinite' }} />
+                  下载中...
+                </>
+              ) : (
+                <>
+                  <Download size={14} style={{ marginRight: 6, verticalAlign: 'middle' }} />
+                  下载全部模型（约 660MB）
+                </>
+              )}
             </button>
           )}
         </SettingsSection>
@@ -149,25 +211,47 @@ function SettingsSection({ title, children }: { title: string; children: React.R
   );
 }
 
-function ModelRow({ label, ready, size }: { label: string; ready: boolean; size: string }) {
+function ModelRow({ label, ready, size, progress }: { label: string; ready: boolean; size: string; progress?: DownloadProgress }) {
+  const isDownloading = progress && !progress.done && progress.total > 0;
+  const percent = isDownloading ? Math.round((progress.downloaded / progress.total) * 100) : 0;
+  const downloadedMB = progress ? (progress.downloaded / 1024 / 1024).toFixed(1) : '0';
+  const totalMB = progress && progress.total > 0 ? (progress.total / 1024 / 1024).toFixed(0) : '?';
+
   return (
     <div style={{
-      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
       padding: '10px 14px', background: '#f5f5f7', borderRadius: 10,
     }}>
-      <div>
-        <div style={{ fontSize: 13, fontWeight: 500, color: '#1d1d1f' }}>{label}</div>
-        <div style={{ fontSize: 11, color: '#aeaeb2' }}>{size}</div>
-      </div>
-      {ready ? (
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 4,
-          color: '#34c759', fontSize: 12, fontWeight: 600,
-        }}>
-          <Check size={14} /> 已就绪
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 500, color: '#1d1d1f' }}>{label}</div>
+          <div style={{ fontSize: 11, color: '#aeaeb2' }}>
+            {isDownloading ? `${downloadedMB} / ${totalMB} MB` : size}
+          </div>
         </div>
-      ) : (
-        <div style={{ fontSize: 12, color: '#aeaeb2' }}>未下载</div>
+        {ready || (progress?.done && !progress?.error) ? (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 4,
+            color: '#34c759', fontSize: 12, fontWeight: 600,
+          }}>
+            <Check size={14} /> 已就绪
+          </div>
+        ) : isDownloading ? (
+          <div style={{ fontSize: 12, color: '#0071e3', fontWeight: 600 }}>{percent}%</div>
+        ) : progress?.error ? (
+          <div style={{ fontSize: 12, color: '#ff3b30' }}>失败</div>
+        ) : (
+          <div style={{ fontSize: 12, color: '#aeaeb2' }}>未下载</div>
+        )}
+      </div>
+      {isDownloading && (
+        <div style={{
+          marginTop: 8, height: 4, background: '#e5e5ea', borderRadius: 2, overflow: 'hidden',
+        }}>
+          <div style={{
+            height: '100%', background: '#0071e3', borderRadius: 2,
+            width: `${percent}%`, transition: 'width 0.3s ease',
+          }} />
+        </div>
       )}
     </div>
   );
