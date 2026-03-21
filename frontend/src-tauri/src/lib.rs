@@ -385,9 +385,9 @@ struct ModelInfo {
 const MODELS: &[ModelInfo] = &[
     ModelInfo {
         id: "asr",
-        filename: "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17.tar.bz2",
-        // Use ModelScope mirror (accessible in China)
-        url: "https://www.modelscope.cn/models/pkufool/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/master/model.int8.onnx",
+        filename: "model.int8.onnx",
+        // SenseVoice ASR model via HF mirror (accessible in China)
+        url: "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/model.int8.onnx",
     },
     ModelInfo {
         id: "translation",
