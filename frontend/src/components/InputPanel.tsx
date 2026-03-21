@@ -40,9 +40,9 @@ export default function InputPanel({
 
     const setup = async () => {
       try {
-        unlistenResult = await listen<{ text: string; final: string }>('speech_recognized', (event) => {
+        unlistenResult = await listen<{ text: string; final: boolean | string }>('speech_recognized', (event) => {
           const { text } = event.payload;
-          const isFinal = event.payload.final === 'true';
+          const isFinal = Boolean(event.payload.final) || event.payload.final === 'true';
           if (text) {
             if (isFinal) {
               // Final result: translate+speak, then clear input for next sentence

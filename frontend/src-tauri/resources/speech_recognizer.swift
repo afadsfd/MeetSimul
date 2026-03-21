@@ -5,30 +5,18 @@ import AVFoundation
 class SpeechRecognizer {
     let speechRecognizer: SFSpeechRecognizer
     let audioEngine = AVAudioEngine()
-    var request: SFSpeechAudioBufferRecognitionRequest?
+    var currentRequest: SFSpeechAudioBufferRecognitionRequest?
     var task: SFSpeechRecognitionTask?
+    var silenceTimer: Timer?
+    var lastText: String = ""
+    var taskGeneration: Int = 0 // prevents stale callbacks from interfering
+    let silenceTimeout: TimeInterval = 0.8
 
     init() {
         speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "zh-CN"))!
     }
 
     func start() {
-        startRecognition()
-        // Keep running
-        RunLoop.main.run()
-    }
-
-    func startRecognition() {
-        task?.cancel()
-        task = nil
-        request = nil
-
-        let req = SFSpeechAudioBufferRecognitionRequest()
-        req.shouldReportPartialResults = true
-        // Don't force on-device recognition - it requires Siri to be fully enabled
-        // Let the system decide whether to use on-device or server-based recognition
-        request = req
-
         let inputNode = audioEngine.inputNode
         let format = inputNode.outputFormat(forBus: 0)
 
@@ -38,61 +26,87 @@ class SpeechRecognizer {
             return
         }
 
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
-            req.append(buffer)
-        }
-
-        task = speechRecognizer.recognitionTask(with: req) { [weak self] result, error in
-            guard let self = self else { return }
-
-            if let result = result {
-                let text = result.bestTranscription.formattedString
-                    .replacingOccurrences(of: "\\", with: "\\\\")
-                    .replacingOccurrences(of: "\"", with: "\\\"")
-                    .replacingOccurrences(of: "\n", with: " ")
-                let isFinal = result.isFinal
-                self.emit("result", ["text": text, "final": isFinal ? "true" : "false"])
-
-                if isFinal {
-                    self.restart()
-                }
-            }
-
-            if let error = error {
-                let nsError = error as NSError
-                // Ignore common non-fatal errors
-                if nsError.domain == "kAFAssistantErrorDomain" && nsError.code == 1110 {
-                    // No speech detected - restart
-                    self.restart()
-                    return
-                }
-                if nsError.code == 216 || nsError.code == 209 || nsError.code == 203 {
-                    // Cancelled / interrupted - restart
-                    self.restart()
-                    return
-                }
-                self.emit("error", ["error": error.localizedDescription])
-                self.restart()
-            }
+        // Install tap ONCE - feeds audio to whatever currentRequest is active
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
+            self?.currentRequest?.append(buffer)
         }
 
         audioEngine.prepare()
         do {
             try audioEngine.start()
-            emit("status", ["status": "listening"])
         } catch {
             emit("error", ["error": "Audio engine failed: \(error.localizedDescription)"])
             exit(1)
+            return
         }
+
+        startRecognitionTask()
+        emit("status", ["status": "listening"])
+        RunLoop.main.run()
     }
 
-    func restart() {
-        audioEngine.stop()
-        audioEngine.inputNode.removeTap(onBus: 0)
+    func startRecognitionTask() {
+        // Increment generation - any callbacks from old tasks will be ignored
+        taskGeneration += 1
+        let myGeneration = taskGeneration
+
+        // Cancel previous
+        task?.cancel()
         task = nil
-        request = nil
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-            self?.startRecognition()
+        silenceTimer?.invalidate()
+        silenceTimer = nil
+        lastText = ""
+
+        // New request
+        let req = SFSpeechAudioBufferRecognitionRequest()
+        req.shouldReportPartialResults = true
+        currentRequest = req
+
+        task = speechRecognizer.recognitionTask(with: req) { [weak self] result, error in
+            guard let self = self else { return }
+            // Ignore callbacks from old/cancelled tasks
+            guard self.taskGeneration == myGeneration else { return }
+
+            if let result = result {
+                let text = result.bestTranscription.formattedString
+
+                if result.isFinal {
+                    self.silenceTimer?.invalidate()
+                    if !text.isEmpty {
+                        self.emit("result", ["text": text, "final": "true"])
+                    }
+                    self.startRecognitionTask()
+                    return
+                }
+
+                // Partial result
+                self.lastText = text
+                self.emit("result", ["text": text, "final": "false"])
+
+                // Reset silence timer
+                DispatchQueue.main.async {
+                    self.silenceTimer?.invalidate()
+                    self.silenceTimer = Timer.scheduledTimer(withTimeInterval: self.silenceTimeout, repeats: false) { [weak self] _ in
+                        guard let self = self, !self.lastText.isEmpty else { return }
+                        guard self.taskGeneration == myGeneration else { return }
+                        self.emit("result", ["text": self.lastText, "final": "true"])
+                        self.startRecognitionTask()
+                    }
+                }
+            }
+
+            if let error = error {
+                // Ignore if this is a stale task
+                guard self.taskGeneration == myGeneration else { return }
+                let nsError = error as NSError
+                let ignoreCodes = [1110, 216, 209, 203, 301]
+                if nsError.domain == "kAFAssistantErrorDomain" && ignoreCodes.contains(nsError.code) {
+                    self.startRecognitionTask()
+                    return
+                }
+                self.emit("error", ["error": error.localizedDescription])
+                self.startRecognitionTask()
+            }
         }
     }
 
@@ -100,7 +114,11 @@ class SpeechRecognizer {
         var json = "{"
         json += "\"type\":\"\(type)\""
         for (key, value) in data {
-            json += ",\"\(key)\":\"\(value)\""
+            let escaped = value
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+                .replacingOccurrences(of: "\n", with: " ")
+            json += ",\"\(key)\":\"\(escaped)\""
         }
         json += "}"
         print(json)

@@ -368,7 +368,7 @@ fn compile_speech_recognizer(app: &tauri::AppHandle) -> Result<std::path::PathBu
     // Check if binary exists and source hasn't changed
     // Use a version marker to detect updates
     let version_marker = get_app_data_dir().join("speech_recognizer.version");
-    let current_version = "2.0.2"; // bump this when Swift source changes
+    let current_version = "2.0.6"; // bump this when Swift source changes
     let needs_compile = if binary.exists() {
         match std::fs::read_to_string(&version_marker) {
             Ok(v) => v.trim() != current_version,
@@ -472,7 +472,9 @@ async fn start_listening(
                         match msg_type {
                             "result" => {
                                 let text = json.get("text").and_then(|v| v.as_str()).unwrap_or("");
-                                let is_final = json.get("final").and_then(|v| v.as_bool()).unwrap_or(false);
+                                let is_final = json.get("final").map(|v| {
+                                    v.as_bool().unwrap_or_else(|| v.as_str().map(|s| s == "true").unwrap_or(false))
+                                }).unwrap_or(false);
                                 app_handle.emit("speech_recognized", serde_json::json!({
                                     "text": text,
                                     "final": is_final,
@@ -496,8 +498,11 @@ async fn start_listening(
                 }
             }
         }
-        // Process ended
-        let _ = state_pid; // just to move it into the closure
+        // Process ended unexpectedly - notify frontend
+        app_handle.emit("speech_error", serde_json::json!({
+            "error": "语音识别进程已停止",
+        })).ok();
+        let _ = state_pid;
     });
 
     Ok(())
