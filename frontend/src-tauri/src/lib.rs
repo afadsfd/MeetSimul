@@ -1,4 +1,3 @@
-use futures_util::StreamExt;
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -15,6 +14,7 @@ use tauri::Manager;
 struct TtsItem {
     text: String,
     voice: String,
+    mode: String,
 }
 
 struct TtsQueue {
@@ -70,7 +70,8 @@ struct AppState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     pub mode: String,          // "local" or "cloud"
-    pub voice: String,         // voice identifier
+    pub voice: String,         // cloud voice identifier (Guy/Jenny)
+    pub local_voice: String,   // local macOS voice name
     pub real_time_translate: bool,
 }
 
@@ -79,9 +80,17 @@ impl Default for Settings {
         Self {
             mode: "cloud".to_string(),
             voice: "Guy".to_string(),
+            local_voice: String::new(),
             real_time_translate: false,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SystemVoice {
+    pub name: String,
+    pub lang: String,
+    pub sample: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -334,29 +343,63 @@ async fn cloud_translate_youdao(text: &str) -> Result<String, String> {
     Ok(text.to_string())
 }
 
+// ─── System Voices ──────────────────────────────────────────
+
+#[tauri::command]
+fn get_system_voices() -> Vec<SystemVoice> {
+    let output = Command::new("say")
+        .args(["-v", "?"])
+        .output();
+
+    let mut voices = Vec::new();
+    if let Ok(out) = output {
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        for line in stdout.lines() {
+            // Format: "Name    lang_REGION    # Sample text"
+            let line = line.trim();
+            if line.is_empty() { continue; }
+
+            // Split at '#' to get sample text
+            let (left, sample) = if let Some(idx) = line.find('#') {
+                (&line[..idx], line[idx+1..].trim().to_string())
+            } else {
+                (line, String::new())
+            };
+
+            // Parse name and lang - name is everything before the lang code
+            let left = left.trim();
+            let parts: Vec<&str> = left.split_whitespace().collect();
+            if parts.len() >= 2 {
+                let lang = parts[parts.len() - 1].to_string();
+                let name = parts[..parts.len() - 1].join(" ");
+                // Only include English voices (en_)
+                if lang.starts_with("en_") {
+                    voices.push(SystemVoice { name, lang, sample });
+                }
+            }
+        }
+    }
+    voices
+}
+
 // ─── TTS (Cloud - Edge TTS via command) ─────────────────────
 
 #[tauri::command]
 fn speak_text(
     text: String,
     voice: String,
-    _mode: String,
+    mode: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     if text.trim().is_empty() {
         return Ok(());
     }
     // Add to queue - background worker will play it in order
-    state.tts_queue.enqueue(TtsItem { text, voice });
+    state.tts_queue.enqueue(TtsItem { text, voice, mode });
     Ok(())
 }
 
 fn play_tts_item(item: &TtsItem) {
-    let edge_voice = match item.voice.as_str() {
-        "Jenny" | "Samantha" | "Female" => "en-US-JennyNeural",
-        _ => "en-US-GuyNeural",
-    };
-
     let safe_text = item.text
         .replace('"', "")
         .replace('\'', "")
@@ -364,10 +407,23 @@ fn play_tts_item(item: &TtsItem) {
         .replace('`', "")
         .replace('$', "");
 
+    if item.mode == "local" {
+        play_tts_local(&safe_text, &item.voice);
+    } else {
+        play_tts_cloud(&safe_text, &item.voice);
+    }
+}
+
+fn play_tts_cloud(text: &str, voice: &str) {
+    let edge_voice = match voice {
+        "Jenny" | "Samantha" | "Female" => "en-US-JennyNeural",
+        _ => "en-US-GuyNeural",
+    };
+
     let tmp_file = "/tmp/meetsimul_tts.mp3";
 
     let edge_tts_result = Command::new("edge-tts")
-        .args(["--voice", edge_voice, "--text", &safe_text, "--write-media", tmp_file])
+        .args(["--voice", edge_voice, "--text", text, "--write-media", tmp_file])
         .output();
 
     match edge_tts_result {
@@ -375,21 +431,54 @@ fn play_tts_item(item: &TtsItem) {
             let _ = Command::new("afplay").arg(tmp_file).output();
         }
         _ => {
-            let say_voice = if item.voice == "Jenny" || item.voice == "Samantha" || item.voice == "Female" {
+            // Fallback to macOS say
+            let say_voice = if voice == "Jenny" || voice == "Samantha" || voice == "Female" {
                 "Samantha"
             } else {
                 "Daniel"
             };
             let _ = Command::new("say")
-                .args(["-v", say_voice, &safe_text])
+                .args(["-v", say_voice, text])
                 .output();
         }
     }
 }
 
+fn play_tts_local(text: &str, voice: &str) {
+    // If a specific voice name is provided, use it directly
+    if !voice.is_empty() && voice != "Guy" && voice != "Jenny" {
+        let result = Command::new("say")
+            .args(["-v", voice, text])
+            .output();
+        if let Ok(output) = result {
+            if output.status.success() {
+                return;
+            }
+        }
+    }
+
+    // Fallback: try common English voices
+    let fallback_voices = ["Samantha", "Daniel", "Alex"];
+    for v in &fallback_voices {
+        let result = Command::new("say")
+            .args(["-v", v, text])
+            .output();
+        if let Ok(output) = result {
+            if output.status.success() {
+                return;
+            }
+        }
+    }
+
+    // Ultimate fallback
+    let _ = Command::new("say").arg(text).output();
+}
+
+
 fn stop_speaking_internal() {
     let _ = Command::new("pkill").args(["-f", "afplay /tmp/meetsimul"]).output();
     let _ = Command::new("pkill").args(["-f", "say -v"]).output();
+    let _ = Command::new("pkill").args(["-f", "local_tts"]).output();
 }
 
 #[tauri::command]
@@ -408,7 +497,7 @@ fn compile_speech_recognizer(app: &tauri::AppHandle) -> Result<std::path::PathBu
     // Check if binary exists and source hasn't changed
     // Use a version marker to detect updates
     let version_marker = get_app_data_dir().join("speech_recognizer.version");
-    let current_version = "2.0.6"; // bump this when Swift source changes
+    let current_version = "2.0.7"; // bump this when Swift source changes
     let needs_compile = if binary.exists() {
         match std::fs::read_to_string(&version_marker) {
             Ok(v) => v.trim() != current_version,
@@ -560,143 +649,21 @@ fn stop_listening(state: tauri::State<'_, AppState>) {
     stop_listening_internal(&state);
 }
 
-// ─── Models ─────────────────────────────────────────────────
-
-fn models_dir() -> std::path::PathBuf {
-    let dir = get_app_data_dir().join("models");
-    std::fs::create_dir_all(&dir).ok();
-    dir
-}
-
-struct ModelInfo {
-    id: &'static str,
-    filename: &'static str,
-    url: &'static str,
-}
-
-const MODELS: &[ModelInfo] = &[
-    ModelInfo {
-        id: "asr",
-        filename: "model.int8.onnx",
-        url: "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/model.int8.onnx",
-    },
-    ModelInfo {
-        id: "translation",
-        filename: "qwen2.5-0.5b-instruct-q4_k_m.gguf",
-        url: "https://hf-mirror.com/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf",
-    },
-    ModelInfo {
-        id: "tts",
-        filename: "en_US-lessac-medium.onnx",
-        url: "https://hf-mirror.com/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx",
-    },
-];
+// ─── Models (legacy stubs for frontend compatibility) ────────
 
 #[tauri::command]
 fn check_models_status() -> ModelStatus {
-    let dir = models_dir();
+    // Local mode now uses macOS native TTS, no models needed
     ModelStatus {
-        asr: dir.join(MODELS[0].filename).exists(),
-        translation: dir.join(MODELS[1].filename).exists(),
-        tts: dir.join(MODELS[2].filename).exists(),
+        asr: true,
+        translation: true,
+        tts: true,
     }
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct DownloadProgress {
-    model_id: String,
-    downloaded: u64,
-    total: u64,
-    done: bool,
-    error: Option<String>,
 }
 
 #[tauri::command]
-async fn download_models(app: tauri::AppHandle) -> Result<(), String> {
-    let dir = models_dir();
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(600))
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
-
-    for model in MODELS {
-        let dest = dir.join(model.filename);
-        if dest.exists() {
-            app.emit("download_progress", DownloadProgress {
-                model_id: model.id.to_string(),
-                downloaded: 1,
-                total: 1,
-                done: true,
-                error: None,
-            }).ok();
-            continue;
-        }
-
-        let resp = client
-            .get(model.url)
-            .header("User-Agent", "MeetSimul/2.0")
-            .send()
-            .await
-            .map_err(|e| format!("Failed to download {}: {}", model.id, e))?;
-
-        if !resp.status().is_success() {
-            let err = format!("HTTP {} for {}", resp.status(), model.id);
-            app.emit("download_progress", DownloadProgress {
-                model_id: model.id.to_string(),
-                downloaded: 0,
-                total: 0,
-                done: true,
-                error: Some(err.clone()),
-            }).ok();
-            return Err(err);
-        }
-
-        let total = resp.content_length().unwrap_or(0);
-        let tmp_path = dest.with_extension("downloading");
-        let mut file = tokio::fs::File::create(&tmp_path)
-            .await
-            .map_err(|e| format!("Failed to create file: {}", e))?;
-
-        let mut stream = resp.bytes_stream();
-        let mut downloaded: u64 = 0;
-        let mut last_emit = std::time::Instant::now();
-
-        use tokio::io::AsyncWriteExt;
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| format!("Download error: {}", e))?;
-            file.write_all(&chunk)
-                .await
-                .map_err(|e| format!("Write error: {}", e))?;
-            downloaded += chunk.len() as u64;
-
-            if last_emit.elapsed().as_millis() > 200 || downloaded == total {
-                app.emit("download_progress", DownloadProgress {
-                    model_id: model.id.to_string(),
-                    downloaded,
-                    total,
-                    done: false,
-                    error: None,
-                }).ok();
-                last_emit = std::time::Instant::now();
-            }
-        }
-
-        file.flush().await.ok();
-        drop(file);
-
-        tokio::fs::rename(&tmp_path, &dest)
-            .await
-            .map_err(|e| format!("Failed to finalize {}: {}", model.id, e))?;
-
-        app.emit("download_progress", DownloadProgress {
-            model_id: model.id.to_string(),
-            downloaded,
-            total,
-            done: true,
-            error: None,
-        }).ok();
-    }
-
+async fn download_models(_app: tauri::AppHandle) -> Result<(), String> {
+    // No models to download - local mode uses macOS native services
     Ok(())
 }
 
@@ -730,6 +697,7 @@ pub fn run() {
             stop_listening,
             check_models_status,
             download_models,
+            get_system_voices,
         ])
         .setup(move |app| {
             if cfg!(debug_assertions) {

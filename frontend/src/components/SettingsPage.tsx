@@ -1,16 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, Cloud, Cpu, Download, Check, BookOpen, AudioLines, Loader, Mail, MessageCircle, User } from 'lucide-react';
-import { invoke } from '@tauri-apps/api/core';
-import { listen as tauriListen } from '@tauri-apps/api/event';
-import type { Settings, ModelStatus, AppView } from '../types';
-
-interface DownloadProgress {
-  model_id: string;
-  downloaded: number;
-  total: number;
-  done: boolean;
-  error: string | null;
-}
+import React from 'react';
+import { ArrowLeft, Cloud, Cpu, BookOpen, AudioLines, Mail, MessageCircle, User } from 'lucide-react';
+import type { Settings, AppView } from '../types';
 
 interface SettingsPageProps {
   settings: Settings;
@@ -19,48 +9,6 @@ interface SettingsPageProps {
 }
 
 export default function SettingsPage({ settings, onUpdateSettings, onNavigate }: SettingsPageProps) {
-  const [modelStatus, setModelStatus] = useState<ModelStatus>({ asr: false, translation: false, tts: false });
-  const [downloading, setDownloading] = useState(false);
-  const [progress, setProgress] = useState<Record<string, DownloadProgress>>({});
-  const [downloadError, setDownloadError] = useState<string | null>(null);
-  const unlistenRef = useRef<(() => void) | null>(null);
-
-  useEffect(() => {
-    invoke<ModelStatus>('check_models_status').then(setModelStatus).catch(() => {});
-    return () => { unlistenRef.current?.(); };
-  }, []);
-
-  const handleDownload = async () => {
-    if (downloading) return;
-    setDownloading(true);
-    setDownloadError(null);
-    setProgress({});
-
-    // Listen for progress events
-    unlistenRef.current = await tauriListen('download_progress', (event: { payload: DownloadProgress }) => {
-      const p = event.payload;
-      setProgress(prev => ({ ...prev, [p.model_id]: p }));
-      if (p.error) {
-        setDownloadError(p.error);
-      }
-    });
-
-    try {
-      await invoke('download_models');
-      // Refresh status after download
-      const status = await invoke<ModelStatus>('check_models_status');
-      setModelStatus(status);
-    } catch (e: any) {
-      setDownloadError(typeof e === 'string' ? e : e?.message || '下载失败，请检查网络连接');
-    } finally {
-      setDownloading(false);
-      unlistenRef.current?.();
-      unlistenRef.current = null;
-    }
-  };
-
-  const allModelsReady = modelStatus.asr && modelStatus.translation && modelStatus.tts;
-
   return (
     <div style={{
       flex: 1,
@@ -95,8 +43,8 @@ export default function SettingsPage({ settings, onUpdateSettings, onNavigate }:
           gap: 3,
         }}>
           {[
-            { id: 'cloud' as const, label: '云端模式', icon: <Cloud size={14} />, desc: '使用在线翻译服务' },
-            { id: 'local' as const, label: '本地模式', icon: <Cpu size={14} />, desc: '离线 AI 推理' },
+            { id: 'cloud' as const, label: '云端模式', icon: <Cloud size={14} />, desc: 'Google 翻译 + Edge TTS' },
+            { id: 'local' as const, label: '本地模式', icon: <Cpu size={14} />, desc: 'Google 翻译 + macOS 语音' },
           ].map(m => (
             <button key={m.id} onClick={() => onUpdateSettings({ mode: m.id })} style={{
               flex: 1, padding: '10px 14px', border: 'none', borderRadius: 8,
@@ -116,47 +64,16 @@ export default function SettingsPage({ settings, onUpdateSettings, onNavigate }:
             </button>
           ))}
         </div>
-      </SettingsSection>
-
-      {/* Model Status */}
-      {settings.mode === 'local' && (
-        <SettingsSection title="模型状态">
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <ModelRow label="语音识别 (SenseVoice)" ready={modelStatus.asr} size="~200MB" progress={progress['asr']} />
-            <ModelRow label="翻译模型 (Qwen2.5-0.5B)" ready={modelStatus.translation} size="~400MB" progress={progress['translation']} />
-            <ModelRow label="语音合成 (Piper TTS)" ready={modelStatus.tts} size="~60MB" progress={progress['tts']} />
+        {settings.mode === 'local' && (
+          <div style={{
+            marginTop: 8, padding: '10px 14px',
+            background: '#f0f7ff', borderRadius: 8,
+            fontSize: 12, color: '#0071e3', lineHeight: 1.6,
+          }}>
+            本地模式使用 macOS 系统语音朗读，延迟更低。建议在「系统设置 → 辅助功能 → 朗读内容 → 系统语音」中下载高级英文语音包以获得更好的音质。
           </div>
-          {downloadError && (
-            <div style={{
-              marginTop: 8, padding: '8px 12px', background: '#fff2f0',
-              borderRadius: 8, fontSize: 12, color: '#ff3b30',
-            }}>
-              {downloadError}
-            </div>
-          )}
-          {!allModelsReady && (
-            <button onClick={handleDownload} disabled={downloading} style={{
-              marginTop: 12, width: '100%', padding: '10px 0',
-              background: downloading ? '#86868b' : '#0071e3', color: '#fff', border: 'none',
-              borderRadius: 10, fontSize: 13, fontWeight: 600,
-              cursor: downloading ? 'not-allowed' : 'pointer',
-              transition: 'background 0.2s',
-            }}>
-              {downloading ? (
-                <>
-                  <Loader size={14} style={{ marginRight: 6, verticalAlign: 'middle', animation: 'spin 1s linear infinite' }} />
-                  下载中...
-                </>
-              ) : (
-                <>
-                  <Download size={14} style={{ marginRight: 6, verticalAlign: 'middle' }} />
-                  下载全部模型（约 660MB）
-                </>
-              )}
-            </button>
-          )}
-        </SettingsSection>
-      )}
+        )}
+      </SettingsSection>
 
       {/* Glossary */}
       <SettingsSection title="术语管理">
@@ -243,52 +160,6 @@ function SettingsSection({ title, children }: { title: string; children: React.R
         textTransform: 'uppercase',
       }}>{title}</h3>
       {children}
-    </div>
-  );
-}
-
-function ModelRow({ label, ready, size, progress }: { label: string; ready: boolean; size: string; progress?: DownloadProgress }) {
-  const isDownloading = progress && !progress.done && progress.total > 0;
-  const percent = isDownloading ? Math.round((progress.downloaded / progress.total) * 100) : 0;
-  const downloadedMB = progress ? (progress.downloaded / 1024 / 1024).toFixed(1) : '0';
-  const totalMB = progress && progress.total > 0 ? (progress.total / 1024 / 1024).toFixed(0) : '?';
-
-  return (
-    <div style={{
-      padding: '10px 14px', background: '#f5f5f7', borderRadius: 10,
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 500, color: '#1d1d1f' }}>{label}</div>
-          <div style={{ fontSize: 11, color: '#aeaeb2' }}>
-            {isDownloading ? `${downloadedMB} / ${totalMB} MB` : size}
-          </div>
-        </div>
-        {ready || (progress?.done && !progress?.error) ? (
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 4,
-            color: '#34c759', fontSize: 12, fontWeight: 600,
-          }}>
-            <Check size={14} /> 已就绪
-          </div>
-        ) : isDownloading ? (
-          <div style={{ fontSize: 12, color: '#0071e3', fontWeight: 600 }}>{percent}%</div>
-        ) : progress?.error ? (
-          <div style={{ fontSize: 12, color: '#ff3b30' }}>失败</div>
-        ) : (
-          <div style={{ fontSize: 12, color: '#aeaeb2' }}>未下载</div>
-        )}
-      </div>
-      {isDownloading && (
-        <div style={{
-          marginTop: 8, height: 4, background: '#e5e5ea', borderRadius: 2, overflow: 'hidden',
-        }}>
-          <div style={{
-            height: '100%', background: '#0071e3', borderRadius: 2,
-            width: `${percent}%`, transition: 'width 0.3s ease',
-          }} />
-        </div>
-      )}
     </div>
   );
 }

@@ -25,10 +25,13 @@ export function useTranslation(settings: Settings) {
       if (speakAfter && result.translated !== lastSpokenRef.current) {
         lastSpokenRef.current = result.translated;
         setIsSpeaking(true);
+        const ttsVoice = settings.mode === 'local' && settings.local_voice
+          ? settings.local_voice
+          : settings.voice;
         try {
           await invoke('speak_text', {
             text: result.translated,
-            voice: settings.voice,
+            voice: ttsVoice,
             mode: settings.mode,
           });
         } catch (e) {
