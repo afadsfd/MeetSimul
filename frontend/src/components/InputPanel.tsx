@@ -106,10 +106,11 @@ export default function InputPanel({
   }, [isListening, realTimeTranslate, onTranslateAndSpeak]);
 
   useEffect(() => {
-    if (realTimeTranslate && inputText.trim()) {
+    // 语音输入时不触发实时翻译，等 final 结果再翻译，避免中间结果反复播放
+    if (realTimeTranslate && inputText.trim() && !isListening) {
       onDebouncedTranslate(inputText);
     }
-  }, [inputText, realTimeTranslate, onDebouncedTranslate]);
+  }, [inputText, realTimeTranslate, onDebouncedTranslate, isListening]);
 
   const handlePlay = () => {
     if (!inputText.trim()) return;

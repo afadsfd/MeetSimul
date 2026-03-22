@@ -416,8 +416,16 @@ fn play_tts_item(item: &TtsItem) {
 
 fn play_tts_cloud(text: &str, voice: &str) {
     let edge_voice = match voice {
-        "Jenny" | "Samantha" | "Female" => "en-US-JennyNeural",
-        _ => "en-US-GuyNeural",
+        "Jenny" => "en-US-JennyNeural",
+        "Aria" => "en-US-AriaNeural",
+        "Davis" => "en-US-DavisNeural",
+        "Sara" => "en-US-SaraNeural",
+        "Tony" => "en-US-TonyNeural",
+        "Nancy" => "en-US-NancyNeural",
+        "Jason" => "en-US-JasonNeural",
+        "Jane" => "en-US-JaneNeural",
+        "Brandon" => "en-US-BrandonNeural",
+        _ => "en-US-GuyNeural", // Guy is default
     };
 
     let tmp_file = "/tmp/meetsimul_tts.mp3";
@@ -432,14 +440,7 @@ fn play_tts_cloud(text: &str, voice: &str) {
         }
         _ => {
             // Fallback to macOS say
-            let say_voice = if voice == "Jenny" || voice == "Samantha" || voice == "Female" {
-                "Samantha"
-            } else {
-                "Daniel"
-            };
-            let _ = Command::new("say")
-                .args(["-v", say_voice, text])
-                .output();
+            let _ = Command::new("say").arg(text).output();
         }
     }
 }

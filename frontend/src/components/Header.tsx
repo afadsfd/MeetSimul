@@ -1,5 +1,5 @@
 import React from 'react';
-import { Settings as SettingsIcon, BookOpen, Cloud, Cpu } from 'lucide-react';
+import { Settings as SettingsIcon, BookOpen, Cloud, Cpu, AudioLines } from 'lucide-react';
 import type { Settings, AppView } from '../types';
 
 interface HeaderProps {
@@ -9,11 +9,6 @@ interface HeaderProps {
   onNavigate: (view: AppView) => void;
   isSpeaking: boolean;
 }
-
-const VOICES = [
-  { id: 'Guy', label: '男声' },
-  { id: 'Jenny', label: '女声' },
-];
 
 export default function Header({ settings, onUpdateSettings, onOpenSettings, onNavigate, isSpeaking }: HeaderProps) {
   return (
@@ -116,11 +111,12 @@ export default function Header({ settings, onUpdateSettings, onOpenSettings, onN
 
         <Divider />
 
-        {/* Voice Toggle: 男声 / 女声 */}
-        <SegmentedControl
-          options={VOICES.map(v => ({ id: v.id, label: v.label }))}
-          value={settings.voice}
-          onChange={(v) => onUpdateSettings({ voice: v })}
+        {/* Voice Selector Button */}
+        <PillButton
+          active={false}
+          onClick={() => onNavigate('voices')}
+          label={settings.mode === 'local' && settings.local_voice ? settings.local_voice : settings.voice}
+          icon={<AudioLines size={12} />}
         />
 
         <Divider />
