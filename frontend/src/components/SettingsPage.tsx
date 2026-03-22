@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, Cloud, Cpu, Download, Check, BookOpen, AudioLines, Loader } from 'lucide-react';
+import { ArrowLeft, Cloud, Cpu, Download, Check, BookOpen, AudioLines, Loader, Mail, MessageCircle, User } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen as tauriListen } from '@tauri-apps/api/event';
 import type { Settings, ModelStatus, AppView } from '../types';
@@ -191,6 +191,45 @@ export default function SettingsPage({ settings, onUpdateSettings, onNavigate }:
           <ArrowLeft size={14} color="#aeaeb2" style={{ transform: 'rotate(180deg)' }} />
         </button>
       </SettingsSection>
+
+      {/* Contact Developer */}
+      <SettingsSection title="联系开发者">
+        <div style={{
+          padding: '14px 16px',
+          background: '#f5f5f7',
+          borderRadius: 10,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 10,
+        }}>
+          <div style={{ fontSize: 13, color: '#86868b', lineHeight: 1.6 }}>
+            如果您有任何建议或问题，欢迎联系开发者
+          </div>
+          <ContactRow icon={<User size={14} color="#0071e3" />} label="开发者" value="ZeroAI" />
+          <ContactRow icon={<Mail size={14} color="#0071e3" />} label="邮箱" value="lz3862680@gmail.com" />
+          <ContactRow icon={<MessageCircle size={14} color="#0071e3" />} label="Telegram" value="@sky87531" />
+        </div>
+      </SettingsSection>
+
+      {/* Version */}
+      <div style={{
+        textAlign: 'center',
+        padding: '8px 0 20px',
+        fontSize: 11,
+        color: '#aeaeb2',
+      }}>
+        会议同传 v2.0.7
+      </div>
+    </div>
+  );
+}
+
+function ContactRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <span style={{ display: 'flex' }}>{icon}</span>
+      <span style={{ fontSize: 12, color: '#aeaeb2', minWidth: 52 }}>{label}</span>
+      <span style={{ fontSize: 13, fontWeight: 500, color: '#1d1d1f' }}>{value}</span>
     </div>
   );
 }

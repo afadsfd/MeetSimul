@@ -1,7 +1,7 @@
 [package]
 name = "meetsimul"
-version = "2.0.6"
-description = "MeetSimul - 会议同声传译"
+version = "2.0.7"
+description = "会议同传 - 会议同声传译"
 authors = ["Zero"]
 license = "MIT"
 repository = ""

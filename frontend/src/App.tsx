@@ -62,6 +62,7 @@ export default function App() {
         settings={settings}
         onUpdateSettings={updateSettings}
         onOpenSettings={() => setView('settings')}
+        onNavigate={setView}
         isSpeaking={isSpeaking}
       />
 
