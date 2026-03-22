@@ -106,9 +106,10 @@ export default function InputPanel({
   }, [isListening, realTimeTranslate, onTranslateAndSpeak]);
 
   useEffect(() => {
-    // 边说边译：实时翻译预览（仅翻译不播放）
-    // 语音输入时跳过，等 final 结果再处理
-    if (realTimeTranslate && inputText.trim() && !isListening) {
+    // 实时翻译预览（仅翻译不播放）
+    // 键盘输入：边说边译开启时触发
+    // 语音输入：始终触发，预填缓存，final 时直接命中缓存省掉翻译延迟
+    if (inputText.trim() && (realTimeTranslate || isListening)) {
       onDebouncedTranslate(inputText);
     }
   }, [inputText, realTimeTranslate, onDebouncedTranslate, isListening]);
