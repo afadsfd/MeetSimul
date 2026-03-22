@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowLeft, Cloud, Cpu, BookOpen, AudioLines, Mail, MessageCircle, User } from 'lucide-react';
+import { ArrowLeft, Cloud, Cpu, BookOpen, Mail, MessageCircle, User } from 'lucide-react';
 import type { Settings, AppView } from '../types';
 
 interface SettingsPageProps {
@@ -92,21 +92,15 @@ export default function SettingsPage({ settings, onUpdateSettings, onNavigate }:
         </button>
       </SettingsSection>
 
-      {/* Voices */}
+      {/* Voice info */}
       <SettingsSection title="语音设置">
-        <button onClick={() => onNavigate('voices')} style={{
-          width: '100%', padding: '12px 14px',
-          background: '#f5f5f7', border: 'none', borderRadius: 10,
-          cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10,
-          transition: 'all 0.2s',
+        <div style={{
+          padding: '12px 14px',
+          background: '#f5f5f7', borderRadius: 10,
+          fontSize: 13, color: '#86868b', lineHeight: 1.6,
         }}>
-          <AudioLines size={18} color="#0071e3" />
-          <div style={{ textAlign: 'left', flex: 1 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: '#1d1d1f' }}>语音选择</div>
-            <div style={{ fontSize: 11, color: '#86868b' }}>选择翻译朗读音色</div>
-          </div>
-          <ArrowLeft size={14} color="#aeaeb2" style={{ transform: 'rotate(180deg)' }} />
-        </button>
+          在顶部控制栏切换「男声 / 女声」。云端模式使用 Edge TTS 高品质语音，本地模式使用 macOS 系统语音。
+        </div>
       </SettingsSection>
 
       {/* Contact Developer */}

@@ -48,25 +48,21 @@ export function useTranslation(settings: Settings) {
 
       if (result.translated) {
         lastSpokenRef.current = result.translated;
-        const ttsVoice = settings.mode === 'local' && settings.local_voice
-          ? settings.local_voice
-          : settings.voice;
         try {
           await invoke('speak_text', {
             text: result.translated,
-            voice: ttsVoice,
+            voice: settings.voice,
             mode: settings.mode,
           });
         } catch (e) {
           console.error('TTS error:', e);
         }
-        // Note: isSpeaking is now driven by speak_status events, not here
       }
     } catch (e) {
       console.error('Translation error:', e);
     }
     setIsTranslating(false);
-  }, [settings.mode, settings.voice, settings.local_voice]); // Fix #4: complete deps
+  }, [settings.mode, settings.voice]);
 
   // Fix #2: Translate only (no TTS) — used for real-time/debounced preview
   const translateOnly = useCallback(async (text: string) => {

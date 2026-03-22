@@ -1,5 +1,5 @@
 import React from 'react';
-import { Settings as SettingsIcon, BookOpen, Cloud, Cpu, AudioLines } from 'lucide-react';
+import { Settings as SettingsIcon, BookOpen, Cloud, Cpu } from 'lucide-react';
 import type { Settings, AppView } from '../types';
 
 interface HeaderProps {
@@ -111,12 +111,14 @@ export default function Header({ settings, onUpdateSettings, onOpenSettings, onN
 
         <Divider />
 
-        {/* Voice Selector Button */}
-        <PillButton
-          active={false}
-          onClick={() => onNavigate('voices')}
-          label={settings.mode === 'local' && settings.local_voice ? settings.local_voice : settings.voice}
-          icon={<AudioLines size={12} />}
+        {/* Voice Toggle: 男声 / 女声 */}
+        <SegmentedControl
+          options={[
+            { id: 'male', label: '男声' },
+            { id: 'female', label: '女声' },
+          ]}
+          value={settings.voice}
+          onChange={(v) => onUpdateSettings({ voice: v })}
         />
 
         <Divider />

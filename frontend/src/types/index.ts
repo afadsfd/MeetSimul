@@ -29,4 +29,4 @@ export interface SystemVoice {
   sample: string;
 }
 
-export type AppView = 'main' | 'settings' | 'glossary' | 'voices';
+export type AppView = 'main' | 'settings' | 'glossary';

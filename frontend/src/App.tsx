@@ -6,7 +6,7 @@ import Onboarding from './components/Onboarding';
 import BlackholeModal from './components/BlackholeModal';
 import SettingsPage from './components/SettingsPage';
 import GlossaryEditor from './components/GlossaryEditor';
-import VoiceSelector from './components/VoiceSelector';
+// VoiceSelector removed - voice is now a simple male/female toggle in Header
 import { useSettings } from './hooks/useSettings';
 import { useTranslation } from './hooks/useTranslation';
 import type { AppView } from './types';
@@ -105,13 +105,6 @@ export default function App() {
         <GlossaryEditor onNavigate={setView} />
       )}
 
-      {view === 'voices' && (
-        <VoiceSelector
-          settings={settings}
-          onUpdateSettings={updateSettings}
-          onNavigate={setView}
-        />
-      )}
     </div>
   );
 }

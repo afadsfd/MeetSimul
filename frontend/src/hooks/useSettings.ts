@@ -5,7 +5,7 @@ import { invoke } from '@tauri-apps/api/core';
 
 const defaultSettings: Settings = {
   mode: 'cloud',
-  voice: 'Guy',
+  voice: 'male',
   local_voice: '',
   real_time_translate: false,
 };

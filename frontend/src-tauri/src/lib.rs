@@ -80,7 +80,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             mode: "cloud".to_string(),
-            voice: "Guy".to_string(),
+            voice: "male".to_string(),
             local_voice: String::new(),
             real_time_translate: false,
         }
@@ -415,18 +415,15 @@ fn play_tts_item(item: &TtsItem) {
     }
 }
 
+fn is_female_voice(voice: &str) -> bool {
+    voice == "female" || voice == "Jenny" || voice == "Female"
+}
+
 fn play_tts_cloud(text: &str, voice: &str) {
-    let edge_voice = match voice {
-        "Jenny" => "en-US-JennyNeural",
-        "Aria" => "en-US-AriaNeural",
-        "Davis" => "en-US-DavisNeural",
-        "Sara" => "en-US-SaraNeural",
-        "Tony" => "en-US-TonyNeural",
-        "Nancy" => "en-US-NancyNeural",
-        "Jason" => "en-US-JasonNeural",
-        "Jane" => "en-US-JaneNeural",
-        "Brandon" => "en-US-BrandonNeural",
-        _ => "en-US-GuyNeural", // Guy is default
+    let edge_voice = if is_female_voice(voice) {
+        "en-US-JennyNeural"
+    } else {
+        "en-US-GuyNeural"
     };
 
     let tmp_file = "/tmp/meetsimul_tts.mp3";
@@ -440,40 +437,25 @@ fn play_tts_cloud(text: &str, voice: &str) {
             let _ = Command::new("afplay").arg(tmp_file).output();
         }
         _ => {
-            // Fallback to macOS say
-            let _ = Command::new("say").arg(text).output();
+            // Fallback to macOS say with matching gender
+            let say_voice = if is_female_voice(voice) { "Samantha" } else { "Daniel" };
+            let _ = Command::new("say")
+                .args(["-v", say_voice, text])
+                .output();
         }
     }
 }
 
 fn play_tts_local(text: &str, voice: &str) {
-    // If a specific voice name is provided, use it directly
-    if !voice.is_empty() && voice != "Guy" && voice != "Jenny" {
-        let result = Command::new("say")
-            .args(["-v", voice, text])
-            .output();
-        if let Ok(output) = result {
-            if output.status.success() {
-                return;
-            }
-        }
-    }
+    let say_voice = if is_female_voice(voice) { "Samantha" } else { "Daniel" };
+    let result = Command::new("say")
+        .args(["-v", say_voice, text])
+        .output();
 
-    // Fallback: try common English voices
-    let fallback_voices = ["Samantha", "Daniel", "Alex"];
-    for v in &fallback_voices {
-        let result = Command::new("say")
-            .args(["-v", v, text])
-            .output();
-        if let Ok(output) = result {
-            if output.status.success() {
-                return;
-            }
-        }
+    // Fallback if chosen voice not available
+    if result.is_err() || !result.unwrap().status.success() {
+        let _ = Command::new("say").arg(text).output();
     }
-
-    // Ultimate fallback
-    let _ = Command::new("say").arg(text).output();
 }
 
 
