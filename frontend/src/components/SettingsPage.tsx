@@ -135,7 +135,7 @@ export default function SettingsPage({ settings, onUpdateSettings, onNavigate }:
         fontSize: 11,
         color: '#aeaeb2',
       }}>
-        会议同传 v2.0.7
+        会议同传 v2.1.0
       </div>
     </div>
   );

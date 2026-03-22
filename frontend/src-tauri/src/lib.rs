@@ -68,6 +68,7 @@ struct AppState {
 // ─── Types ───────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Settings {
     pub mode: String,          // "local" or "cloud"
     pub voice: String,         // cloud voice identifier (Guy/Jenny)
@@ -498,7 +499,7 @@ fn compile_speech_recognizer(app: &tauri::AppHandle) -> Result<std::path::PathBu
     // Check if binary exists and source hasn't changed
     // Use a version marker to detect updates
     let version_marker = get_app_data_dir().join("speech_recognizer.version");
-    let current_version = "2.0.7"; // bump this when Swift source changes
+    let current_version = "2.1.0"; // bump this when Swift source changes
     let needs_compile = if binary.exists() {
         match std::fs::read_to_string(&version_marker) {
             Ok(v) => v.trim() != current_version,

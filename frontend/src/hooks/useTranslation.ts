@@ -1,8 +1,9 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { isSystemPrompt } from '../utils/systemPromptFilter';
 import type { Settings, TranslateResult } from '../types';
 
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 
 export function useTranslation(settings: Settings) {
   const [translation, setTranslation] = useState('');
@@ -11,7 +12,30 @@ export function useTranslation(settings: Settings) {
   const lastSpokenRef = useRef('');
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const translateAndSpeak = useCallback(async (text: string, speakAfter = true) => {
+  // Fix #3: Listen to Rust speak_status events for accurate isSpeaking state
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+
+    const setup = async () => {
+      try {
+        unlisten = await listen<{ status: string }>('speak_status', (event) => {
+          if (event.payload.status === 'playing') {
+            setIsSpeaking(true);
+          } else if (event.payload.status === 'idle') {
+            setIsSpeaking(false);
+          }
+        });
+      } catch {
+        // Not in Tauri environment
+      }
+    };
+
+    setup();
+    return () => { unlisten?.(); };
+  }, []);
+
+  // Translate and speak — used for final results (Enter key, mic final, play button)
+  const translateAndSpeak = useCallback(async (text: string) => {
     if (!text.trim() || isSystemPrompt(text) || !invoke) return;
 
     setIsTranslating(true);
@@ -22,9 +46,8 @@ export function useTranslation(settings: Settings) {
       });
       setTranslation(result.translated);
 
-      if (speakAfter && result.translated !== lastSpokenRef.current) {
+      if (result.translated) {
         lastSpokenRef.current = result.translated;
-        setIsSpeaking(true);
         const ttsVoice = settings.mode === 'local' && settings.local_voice
           ? settings.local_voice
           : settings.voice;
@@ -37,14 +60,15 @@ export function useTranslation(settings: Settings) {
         } catch (e) {
           console.error('TTS error:', e);
         }
-        setIsSpeaking(false);
+        // Note: isSpeaking is now driven by speak_status events, not here
       }
     } catch (e) {
       console.error('Translation error:', e);
     }
     setIsTranslating(false);
-  }, [settings.mode, settings.voice]);
+  }, [settings.mode, settings.voice, settings.local_voice]); // Fix #4: complete deps
 
+  // Fix #2: Translate only (no TTS) — used for real-time/debounced preview
   const translateOnly = useCallback(async (text: string) => {
     if (!text.trim() || isSystemPrompt(text) || !invoke) return;
     setIsTranslating(true);
@@ -60,12 +84,13 @@ export function useTranslation(settings: Settings) {
     setIsTranslating(false);
   }, [settings.mode]);
 
-  const debouncedTranslateAndSpeak = useCallback((text: string) => {
+  // Fix #2: Debounced translate — only translates, no TTS
+  const debouncedTranslateOnly = useCallback((text: string) => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      translateAndSpeak(text, true);
+      translateOnly(text);
     }, 300);
-  }, [translateAndSpeak]);
+  }, [translateOnly]);
 
   const stopSpeaking = useCallback(async () => {
     if (invoke) {
@@ -82,7 +107,7 @@ export function useTranslation(settings: Settings) {
     isTranslating,
     translateAndSpeak,
     translateOnly,
-    debouncedTranslateAndSpeak,
+    debouncedTranslateOnly,
     stopSpeaking,
     setTranslation,
   };

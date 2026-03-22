@@ -20,7 +20,7 @@ export default function App() {
     isSpeaking,
     isTranslating,
     translateAndSpeak,
-    debouncedTranslateAndSpeak,
+    debouncedTranslateOnly,
     stopSpeaking,
   } = useTranslation(settings);
 
@@ -80,7 +80,7 @@ export default function App() {
         }}>
           <InputPanel
             onTranslateAndSpeak={translateAndSpeak}
-            onDebouncedTranslate={debouncedTranslateAndSpeak}
+            onDebouncedTranslate={debouncedTranslateOnly}
             onStopSpeaking={stopSpeaking}
             isSpeaking={isSpeaking}
             isTranslating={isTranslating}
