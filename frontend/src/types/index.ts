@@ -3,6 +3,8 @@ export interface Settings {
   voice: string;
   local_voice: string;
   real_time_translate: boolean;
+  tts_speed: number;
+  mini_mode: boolean;
 }
 
 export interface GlossaryEntry {
@@ -15,6 +17,13 @@ export interface TranslateResult {
   translated: string;
   time_ms: number;
   method: string;
+}
+
+export interface HistoryItem {
+  id: number;
+  time: string;
+  zh: string;
+  en: string;
 }
 
 export interface ModelStatus {

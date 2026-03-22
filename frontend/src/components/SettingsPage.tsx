@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowLeft, Cloud, Cpu, BookOpen, Mail, MessageCircle, User } from 'lucide-react';
+import { ArrowLeft, Cloud, Cpu, BookOpen, Mail, MessageCircle, User, Minimize2, Keyboard } from 'lucide-react';
 import type { Settings, AppView } from '../types';
 
 interface SettingsPageProps {
@@ -9,6 +9,13 @@ interface SettingsPageProps {
 }
 
 export default function SettingsPage({ settings, onUpdateSettings, onNavigate }: SettingsPageProps) {
+  const speedLabel = (s: number) => {
+    if (s <= 0.8) return '慢速';
+    if (s >= 1.3) return '快速';
+    if (s === 1.0) return '正常';
+    return `${s.toFixed(1)}x`;
+  };
+
   return (
     <div style={{
       flex: 1,
@@ -64,15 +71,89 @@ export default function SettingsPage({ settings, onUpdateSettings, onNavigate }:
             </button>
           ))}
         </div>
-        {settings.mode === 'local' && (
+      </SettingsSection>
+
+      {/* TTS Speed */}
+      <SettingsSection title="语音速度">
+        <div style={{
+          padding: '14px 16px',
+          background: '#f5f5f7', borderRadius: 10,
+        }}>
           <div style={{
-            marginTop: 8, padding: '10px 14px',
-            background: '#f0f7ff', borderRadius: 8,
-            fontSize: 12, color: '#0071e3', lineHeight: 1.6,
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            marginBottom: 10,
           }}>
-            本地模式使用 macOS 系统语音朗读，延迟更低。建议在「系统设置 → 辅助功能 → 朗读内容 → 系统语音」中下载高级英文语音包以获得更好的音质。
+            <span style={{ fontSize: 13, color: '#1d1d1f', fontWeight: 500 }}>
+              播放速度
+            </span>
+            <span style={{
+              fontSize: 13, fontWeight: 600,
+              color: '#0071e3',
+              background: '#0071e310',
+              padding: '2px 10px',
+              borderRadius: 6,
+            }}>
+              {settings.tts_speed.toFixed(1)}x · {speedLabel(settings.tts_speed)}
+            </span>
           </div>
-        )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 11, color: '#aeaeb2' }}>0.8x</span>
+            <input
+              type="range"
+              min="0.8"
+              max="1.5"
+              step="0.1"
+              value={settings.tts_speed}
+              onChange={(e) => onUpdateSettings({ tts_speed: parseFloat(e.target.value) })}
+              style={{
+                flex: 1, height: 4,
+                appearance: 'none',
+                background: `linear-gradient(to right, #0071e3 ${((settings.tts_speed - 0.8) / 0.7) * 100}%, #e8e8ed ${((settings.tts_speed - 0.8) / 0.7) * 100}%)`,
+                borderRadius: 2,
+                outline: 'none',
+                cursor: 'pointer',
+              }}
+            />
+            <span style={{ fontSize: 11, color: '#aeaeb2' }}>1.5x</span>
+          </div>
+        </div>
+      </SettingsSection>
+
+      {/* Mini Mode */}
+      <SettingsSection title="窗口模式">
+        <button onClick={() => onUpdateSettings({ mini_mode: !settings.mini_mode })} style={{
+          width: '100%', padding: '12px 14px',
+          background: settings.mini_mode ? '#0071e308' : '#f5f5f7',
+          border: settings.mini_mode ? '1px solid #0071e330' : '1px solid transparent',
+          borderRadius: 10,
+          cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10,
+          transition: 'all 0.2s',
+        }}>
+          <Minimize2 size={18} color={settings.mini_mode ? '#0071e3' : '#86868b'} />
+          <div style={{ textAlign: 'left', flex: 1 }}>
+            <div style={{
+              fontSize: 13, fontWeight: 600,
+              color: settings.mini_mode ? '#0071e3' : '#1d1d1f',
+            }}>迷你悬浮窗</div>
+            <div style={{ fontSize: 11, color: '#86868b' }}>
+              小窗口始终置顶，只显示翻译结果（⌘M 快速切换）
+            </div>
+          </div>
+          <div style={{
+            width: 40, height: 22, borderRadius: 11,
+            background: settings.mini_mode ? '#0071e3' : '#e8e8ed',
+            position: 'relative', transition: 'background 0.2s',
+          }}>
+            <div style={{
+              width: 18, height: 18, borderRadius: '50%',
+              background: '#ffffff',
+              position: 'absolute', top: 2,
+              left: settings.mini_mode ? 20 : 2,
+              transition: 'left 0.2s',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
+            }} />
+          </div>
+        </button>
       </SettingsSection>
 
       {/* Glossary */}
@@ -92,14 +173,17 @@ export default function SettingsPage({ settings, onUpdateSettings, onNavigate }:
         </button>
       </SettingsSection>
 
-      {/* Voice info */}
-      <SettingsSection title="语音设置">
+      {/* Keyboard Shortcuts */}
+      <SettingsSection title="快捷键">
         <div style={{
-          padding: '12px 14px',
+          padding: '12px 16px',
           background: '#f5f5f7', borderRadius: 10,
-          fontSize: 13, color: '#86868b', lineHeight: 1.6,
+          display: 'flex', flexDirection: 'column', gap: 8,
         }}>
-          在顶部控制栏切换「男声 / 女声」。云端模式使用 Edge TTS 高品质语音，本地模式使用 macOS 系统语音。
+          <ShortcutRow keys="Esc" desc="停止播放" />
+          <ShortcutRow keys="⌘ M" desc="切换迷你悬浮窗" />
+          <ShortcutRow keys="⌘ ⇧ M" desc="开始 / 停止语音输入" />
+          <ShortcutRow keys="Enter" desc="翻译并播放（非边说边译模式）" />
         </div>
       </SettingsSection>
 
@@ -131,6 +215,20 @@ export default function SettingsPage({ settings, onUpdateSettings, onNavigate }:
       }}>
         会议同传 v2.1.0
       </div>
+    </div>
+  );
+}
+
+function ShortcutRow({ keys, desc }: { keys: string; desc: string }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <span style={{ fontSize: 12, color: '#86868b' }}>{desc}</span>
+      <kbd style={{
+        fontSize: 11, fontWeight: 600, color: '#1d1d1f',
+        background: '#ffffff', padding: '2px 8px', borderRadius: 5,
+        border: '1px solid #e8e8ed',
+        fontFamily: '-apple-system, system-ui, sans-serif',
+      }}>{keys}</kbd>
     </div>
   );
 }

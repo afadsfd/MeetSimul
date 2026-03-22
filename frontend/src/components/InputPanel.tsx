@@ -105,6 +105,13 @@ export default function InputPanel({
     }
   }, [isListening, realTimeTranslate, onTranslateAndSpeak]);
 
+  // Listen for keyboard shortcut Cmd+Shift+M to toggle mic
+  useEffect(() => {
+    const handler = () => { toggleListening(); };
+    window.addEventListener('toggle-mic', handler);
+    return () => window.removeEventListener('toggle-mic', handler);
+  }, [toggleListening]);
+
   useEffect(() => {
     // 实时翻译预览（仅翻译不播放）
     // 键盘输入：边说边译开启时触发

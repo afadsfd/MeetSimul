@@ -15,6 +15,7 @@ struct TtsItem {
     text: String,
     voice: String,
     mode: String,
+    speed: f64, // 0.5 ~ 2.0, default 1.0
 }
 
 struct TtsQueue {
@@ -63,6 +64,7 @@ struct AppState {
     translate_cache: Mutex<LruCache<String, String>>,
     tts_queue: Arc<TtsQueue>,
     listener_process: Mutex<Option<u32>>, // PID of speech recognizer
+    recent_context: Mutex<VecDeque<String>>, // last N Chinese sentences for context
 }
 
 // ─── Types ───────────────────────────────────────────────────
@@ -71,9 +73,11 @@ struct AppState {
 #[serde(default)]
 pub struct Settings {
     pub mode: String,          // "local" or "cloud"
-    pub voice: String,         // cloud voice identifier (Guy/Jenny)
-    pub local_voice: String,   // local macOS voice name
+    pub voice: String,         // "male" or "female"
+    pub local_voice: String,   // legacy, kept for compat
     pub real_time_translate: bool,
+    pub tts_speed: f64,        // 0.8 ~ 1.5, default 1.0
+    pub mini_mode: bool,       // compact floating window
 }
 
 impl Default for Settings {
@@ -83,6 +87,8 @@ impl Default for Settings {
             voice: "male".to_string(),
             local_voice: String::new(),
             real_time_translate: false,
+            tts_speed: 1.0,
+            mini_mode: false,
         }
     }
 }
@@ -227,6 +233,7 @@ fn save_glossary(entries: Vec<GlossaryEntry>) -> Result<(), String> {
 async fn translate_text(
     text: String,
     _mode: String,
+    is_final: Option<bool>,
     state: tauri::State<'_, AppState>,
 ) -> Result<TranslateResult, String> {
     if text.trim().is_empty() {
@@ -248,14 +255,43 @@ async fn translate_text(
         }
     }
 
-    // Both local and cloud modes use cloud translation for now
-    // Local models are downloaded but inference runtime will be added in Phase 3
-    let translated = cloud_translate(&text).await?;
+    // Build context-aware text for translation
+    // Prepend recent sentences so Google Translate gets context
+    let translate_input = {
+        let ctx = state.recent_context.lock().unwrap();
+        if ctx.is_empty() {
+            text.clone()
+        } else {
+            // Join context sentences + current, separated by newlines
+            let mut parts: Vec<String> = ctx.iter().cloned().collect();
+            parts.push(text.clone());
+            parts.join("\n")
+        }
+    };
+
+    let full_translated = cloud_translate(&translate_input).await?;
+
+    // Extract only the last line (current sentence's translation)
+    let translated = if full_translated.contains('\n') {
+        full_translated.lines().last().unwrap_or(&full_translated).to_string()
+    } else {
+        // If context was single sentence or Google merged them, use as-is
+        full_translated.clone()
+    };
 
     // Store in cache
     {
         let mut cache = state.translate_cache.lock().unwrap();
         cache.put(text.clone(), translated.clone());
+    }
+
+    // If this is a final sentence, add to context history
+    if is_final.unwrap_or(false) {
+        let mut ctx = state.recent_context.lock().unwrap();
+        ctx.push_back(text.clone());
+        while ctx.len() > 3 {
+            ctx.pop_front();
+        }
     }
 
     Ok(TranslateResult {
@@ -390,13 +426,14 @@ fn speak_text(
     text: String,
     voice: String,
     mode: String,
+    speed: Option<f64>,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     if text.trim().is_empty() {
         return Ok(());
     }
-    // Add to queue - background worker will play it in order
-    state.tts_queue.enqueue(TtsItem { text, voice, mode });
+    let speed = speed.unwrap_or(1.0).clamp(0.5, 2.0);
+    state.tts_queue.enqueue(TtsItem { text, voice, mode, speed });
     Ok(())
 }
 
@@ -409,9 +446,9 @@ fn play_tts_item(item: &TtsItem) {
         .replace('$', "");
 
     if item.mode == "local" {
-        play_tts_local(&safe_text, &item.voice);
+        play_tts_local(&safe_text, &item.voice, item.speed);
     } else {
-        play_tts_cloud(&safe_text, &item.voice);
+        play_tts_cloud(&safe_text, &item.voice, item.speed);
     }
 }
 
@@ -419,17 +456,25 @@ fn is_female_voice(voice: &str) -> bool {
     voice == "female" || voice == "Jenny" || voice == "Female"
 }
 
-fn play_tts_cloud(text: &str, voice: &str) {
+fn play_tts_cloud(text: &str, voice: &str, speed: f64) {
     let edge_voice = if is_female_voice(voice) {
         "en-US-JennyNeural"
     } else {
         "en-US-GuyNeural"
     };
 
+    // edge-tts rate: "+0%", "+20%", "-10%" etc.
+    let rate_pct = ((speed - 1.0) * 100.0).round() as i32;
+    let rate_str = if rate_pct >= 0 {
+        format!("+{}%", rate_pct)
+    } else {
+        format!("{}%", rate_pct)
+    };
+
     let tmp_file = "/tmp/meetsimul_tts.mp3";
 
     let edge_tts_result = Command::new("edge-tts")
-        .args(["--voice", edge_voice, "--text", text, "--write-media", tmp_file])
+        .args(["--voice", edge_voice, "--rate", &rate_str, "--text", text, "--write-media", tmp_file])
         .output();
 
     match edge_tts_result {
@@ -437,24 +482,25 @@ fn play_tts_cloud(text: &str, voice: &str) {
             let _ = Command::new("afplay").arg(tmp_file).output();
         }
         _ => {
-            // Fallback to macOS say with matching gender
+            // Fallback to macOS say with matching gender and speed
             let say_voice = if is_female_voice(voice) { "Samantha" } else { "Daniel" };
+            let wpm = (175.0 * speed).round() as u32; // default ~175 wpm
             let _ = Command::new("say")
-                .args(["-v", say_voice, text])
+                .args(["-v", say_voice, "-r", &wpm.to_string(), text])
                 .output();
         }
     }
 }
 
-fn play_tts_local(text: &str, voice: &str) {
+fn play_tts_local(text: &str, voice: &str, speed: f64) {
     let say_voice = if is_female_voice(voice) { "Samantha" } else { "Daniel" };
+    let wpm = (175.0 * speed).round() as u32;
     let result = Command::new("say")
-        .args(["-v", say_voice, text])
+        .args(["-v", say_voice, "-r", &wpm.to_string(), text])
         .output();
 
-    // Fallback if chosen voice not available
     if result.is_err() || !result.unwrap().status.success() {
-        let _ = Command::new("say").arg(text).output();
+        let _ = Command::new("say").args(["-r", &wpm.to_string(), text]).output();
     }
 }
 
@@ -651,6 +697,25 @@ async fn download_models(_app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+// ─── Window Control ─────────────────────────────────────────
+
+#[tauri::command]
+fn set_always_on_top(app: tauri::AppHandle, on_top: bool) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        window.set_always_on_top(on_top).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn set_window_size(app: tauri::AppHandle, width: f64, height: f64) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        window.set_size(tauri::Size::Logical(tauri::LogicalSize { width, height }))
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 // ─── App Entry ───────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -666,6 +731,7 @@ pub fn run() {
             translate_cache: Mutex::new(LruCache::new(NonZeroUsize::new(500).unwrap())),
             tts_queue: tts_queue.clone(),
             listener_process: Mutex::new(None),
+            recent_context: Mutex::new(VecDeque::with_capacity(4)),
         })
         .invoke_handler(tauri::generate_handler![
             check_blackhole_installed,
@@ -682,6 +748,8 @@ pub fn run() {
             check_models_status,
             download_models,
             get_system_voices,
+            set_always_on_top,
+            set_window_size,
         ])
         .setup(move |app| {
             if cfg!(debug_assertions) {

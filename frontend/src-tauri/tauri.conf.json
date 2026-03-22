@@ -15,8 +15,8 @@
         "title": "会议同传",
         "width": 1000,
         "height": 700,
-        "minWidth": 800,
-        "minHeight": 600,
+        "minWidth": 350,
+        "minHeight": 250,
         "resizable": true,
         "fullscreen": false,
         "center": true

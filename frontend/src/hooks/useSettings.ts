@@ -8,6 +8,8 @@ const defaultSettings: Settings = {
   voice: 'male',
   local_voice: '',
   real_time_translate: false,
+  tts_speed: 1.0,
+  mini_mode: false,
 };
 
 export function useSettings() {
