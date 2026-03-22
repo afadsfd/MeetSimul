@@ -5,16 +5,8 @@ import type { Settings, AppView, SystemVoice } from '../types';
 import { invoke } from '@tauri-apps/api/core';
 
 const CLOUD_VOICES = [
-  { id: 'Guy', label: 'Guy', desc: '成熟男声', gender: '男' },
-  { id: 'Davis', label: 'Davis', desc: '沉稳商务男声', gender: '男' },
-  { id: 'Jason', label: 'Jason', desc: '播音男声', gender: '男' },
-  { id: 'Tony', label: 'Tony', desc: '活力男声', gender: '男' },
-  { id: 'Brandon', label: 'Brandon', desc: '年轻男声', gender: '男' },
-  { id: 'Jenny', label: 'Jenny', desc: '自然女声', gender: '女' },
-  { id: 'Aria', label: 'Aria', desc: '新闻播报女声', gender: '女' },
-  { id: 'Sara', label: 'Sara', desc: '温柔女声', gender: '女' },
-  { id: 'Nancy', label: 'Nancy', desc: '专业女声', gender: '女' },
-  { id: 'Jane', label: 'Jane', desc: '对话女声', gender: '女' },
+  { id: 'Guy', label: 'Guy', desc: '默认男声', gender: '男' },
+  { id: 'Jenny', label: 'Jenny', desc: '默认女声', gender: '女' },
 ];
 
 interface VoiceSelectorProps {
