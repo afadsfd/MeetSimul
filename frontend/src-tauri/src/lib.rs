@@ -255,16 +255,33 @@ async fn translate_text(
         }
     }
 
+    // Apply glossary: replace Chinese terms with English before translation
+    let glossary = get_glossary();
+    let text_for_translate = if glossary.is_empty() {
+        text.clone()
+    } else {
+        let mut result = text.clone();
+        // Sort by length descending so longer terms match first
+        let mut sorted = glossary.clone();
+        sorted.sort_by(|a, b| b.zh.len().cmp(&a.zh.len()));
+        for entry in &sorted {
+            if !entry.zh.is_empty() && !entry.en.is_empty() {
+                result = result.replace(&entry.zh, &entry.en);
+            }
+        }
+        result
+    };
+
     // Build context-aware text for translation
     // Prepend recent sentences so Google Translate gets context
     let translate_input = {
         let ctx = state.recent_context.lock().unwrap();
         if ctx.is_empty() {
-            text.clone()
+            text_for_translate.clone()
         } else {
             // Join context sentences + current, separated by newlines
             let mut parts: Vec<String> = ctx.iter().cloned().collect();
-            parts.push(text.clone());
+            parts.push(text_for_translate.clone());
             parts.join("\n")
         }
     };
